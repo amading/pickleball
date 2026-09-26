@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, CheckCircle2, RefreshCw, RotateCcw, Trophy } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, CloudOff, CloudUpload, History, RefreshCw, RotateCcw, Trophy, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import './liveScoring.css'
 import './rallyMinimal.css'
@@ -52,17 +52,28 @@ function demoRally(match: ScoringMatch, action: RallyAction, format: ScoringResp
   return next
 }
 
-export default function LiveScoring({ scoreKey, stationToken, onBack, demoData, onDemoSave }: { scoreKey: string; stationToken?: string; onBack?: () => void; demoData?: ScoringResponse; onDemoSave?: (match: ScoringMatch) => void }) {
+export default function LiveScoring({ scoreKey, stationToken, onBack, onNextGame, demoData, onDemoSave }: { scoreKey: string; stationToken?: string; onBack?: () => void; onNextGame?: () => void; demoData?: ScoringResponse; onDemoSave?: (match: ScoringMatch) => void }) {
   const [categoryId, matchId, token] = scoreKey.split('.')
   const [data, setData] = useState<ScoringResponse | null>(demoData ?? null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [lastSaved, setLastSaved] = useState(false)
+  const [online, setOnline] = useState(navigator.onLine)
+  const [serverReachable, setServerReachable] = useState(true)
   const [refreshIndex, setRefreshIndex] = useState(0)
   const [dismissedVersion, setDismissedVersion] = useState<number | null>(null)
   const [showCorrection, setShowCorrection] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
   const adminToken = readToken()
   const invalidScoreKey = !categoryId || !matchId || !token
+
+  useEffect(() => {
+    const connected = () => { setOnline(true); setRefreshIndex((current) => current + 1) }
+    const disconnected = () => { setOnline(false); setServerReachable(false) }
+    window.addEventListener('online', connected)
+    window.addEventListener('offline', disconnected)
+    return () => { window.removeEventListener('online', connected); window.removeEventListener('offline', disconnected) }
+  }, [])
 
   useEffect(() => {
     if (invalidScoreKey || demoData) return
@@ -70,13 +81,14 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, demoData, 
     async function loadMatch() {
       try {
         const response = await fetch(`/api/categories/${categoryId}/matches/${matchId}`, { cache: 'no-cache', headers: { 'x-score-token': token, ...(stationToken ? { 'x-station-token': stationToken } : {}), ...authHeaders(adminToken) } })
+        if (active) setServerReachable(true)
         const value = await response.json().catch(() => null)
         if (!value) throw new Error('The tournament server is not responding.')
         if (!response.ok) throw new Error(value.error || 'Match not found.')
-        if (active) { setData(value); setError('') }
-      } catch (problem) { if (active) setError((problem as Error).message) }
+        if (active) { setData(value); setError(''); setLastSaved(true) }
+      } catch (problem) { if (active) { if (problem instanceof TypeError || !navigator.onLine) setServerReachable(false); setError((problem as Error).message) } }
     }
-    void loadMatch()
+    if (!busy) void loadMatch()
     const timer = window.setInterval(() => { if (!busy) void loadMatch() }, 2500)
     return () => { active = false; window.clearInterval(timer) }
   }, [categoryId, matchId, token, stationToken, adminToken, invalidScoreKey, demoData, busy, refreshIndex])
@@ -92,6 +104,7 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, demoData, 
           method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-score-token': token, ...(stationToken ? { 'x-station-token': stationToken } : {}), ...authHeaders(adminToken) },
           body: JSON.stringify({ action, team, serveNumber, version: data.match.version }),
         })
+        setServerReachable(true)
         const value = await response.json().catch(() => null)
         if (!value) throw new Error('Score was not saved. Check the tournament server.')
         if (!response.ok) throw new Error(value.error || 'Action could not be saved.')
@@ -101,14 +114,15 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, demoData, 
       onDemoSave?.(updated)
       setLastSaved(true)
       setShowCorrection(false)
+      setShowHistory(false)
       if ('vibrate' in navigator) navigator.vibrate(25)
-    } catch (problem) { setError((problem as Error).message); setRefreshIndex((current) => current + 1) }
+    } catch (problem) { if (problem instanceof TypeError || !navigator.onLine) setServerReachable(false); setLastSaved(false); setError((problem as Error).message); setRefreshIndex((current) => current + 1) }
     finally { setBusy(false) }
   }
 
   async function finalize() {
-    if (!data || busy) return
-    setBusy(true); setError('')
+    if (!data || busy || (!demoData && (!online || !serverReachable))) return
+    setBusy(true); setError(''); setLastSaved(false)
     try {
       let updated: ScoringMatch
       if (demoData) updated = { ...data.match, status: 'final', winner: data.match.score1 > data.match.score2 ? data.team1?.id ?? null : data.team2?.id ?? null, version: data.match.version + 1 }
@@ -117,6 +131,7 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, demoData, 
           method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-score-token': token, ...(stationToken ? { 'x-station-token': stationToken } : {}), ...authHeaders(adminToken) },
           body: JSON.stringify({ score1: data.match.score1, score2: data.match.score2, status: 'final', version: data.match.version }),
         })
+        setServerReachable(true)
         const value = await response.json().catch(() => null)
         if (!value) throw new Error('Result was not saved. Check the tournament server.')
         if (!response.ok) throw new Error(value.error || 'Result could not be saved.')
@@ -124,13 +139,14 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, demoData, 
       }
       setData((current) => current ? { ...current, match: updated } : current)
       onDemoSave?.(updated)
+      setLastSaved(true)
       setRefreshIndex((current) => current + 1)
-    } catch (problem) { setError((problem as Error).message); setRefreshIndex((current) => current + 1) }
+    } catch (problem) { if (problem instanceof TypeError || !navigator.onLine) setServerReachable(false); setError((problem as Error).message); setRefreshIndex((current) => current + 1) }
     finally { setBusy(false) }
   }
 
   const match = data?.match
-  const canScore = Boolean(token && data?.team1 && data.team2 && match?.status !== 'final' && match?.status !== 'bye')
+  const canScore = Boolean(token && data?.team1 && data.team2 && match?.status !== 'final' && match?.status !== 'bye' && (demoData || (online && serverReachable)))
   const canFinalize = Boolean(match && validFinal(match.score1, match.score2, data?.pointsToWin ?? 11, data?.winBy ?? 2))
   const finishPrompt = canFinalize && match?.status !== 'final' && dismissedVersion !== match?.version
   const servingTeam = match?.serveTeam ?? 1
@@ -140,11 +156,23 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, demoData, 
   const nextServeTeam = data?.format === 'singles' || match?.serveNumber === 2 ? (servingTeam === 1 ? data?.team2 : data?.team1) : (servingTeam === 1 ? data?.team1 : data?.team2)
   const nextServeNumber = data?.format === 'singles' || match?.serveNumber === 2 ? 1 : 2
   const nearTarget = (score: number) => score >= (data?.pointsToWin ?? 11) - 1
+  const saveState = demoData ? lastSaved ? 'local' : 'demo' : busy ? 'saving' : !online || !serverReachable ? 'offline' : error ? 'error' : lastSaved ? 'saved' : 'saving'
+  const saveLabel = { local: 'Local only', demo: 'Demo', saving: 'Saving', offline: 'Offline', error: 'Not saved', saved: 'Saved' }[saveState]
+  const historyEvents = [...(match?.scoreEvents ?? [])].reverse().slice(0, 10)
+
+  function eventLabel(event: ScoreEvent) {
+    const teamName = event.team === 1 ? data?.team1?.teamName : event.team === 2 ? data?.team2?.teamName : ''
+    if (event.action === 'point') return `+1 ${teamName}`
+    if (event.action === 'lost-serve') return `Serve → ${teamName} · ${event.serveNumber ?? 1}`
+    if (event.action === 'set-serve') return `Serve fixed → ${teamName} · ${event.serveNumber ?? 1}`
+    if (event.action === 'undo') return 'Undo last action'
+    return 'Score corrected'
+  }
 
   return <main className="score-page rally-page"><div className="score-shell rally-shell">
     {data && match ? <>
       <div className="rally-heading"><div className="rally-heading-line">{onBack ? <button type="button" className="rally-back" aria-label="Back to games" onClick={onBack}><ArrowLeft size={21} /></button> : <a className="rally-back" aria-label="Back to tournament" href={`/?register=${categoryId}`}><ArrowLeft size={21} /></a>}<h1>{match.stage === 'pool' ? `Game ${match.game}` : `Playoff · Round ${match.round}`}</h1><span className={`rally-state ${match.status}`}>{match.status === 'final' ? 'FINAL' : match.status === 'live' ? 'LIVE' : 'READY'}</span></div><p>{match.court} · {match.pool ?? data.categoryTitle} · To {data.pointsToWin}</p>{demoData && <span className="rally-demo">DEMO · NO REAL RESULTS</span>}</div>
-      <div className="rally-call"><small aria-live="polite">{busy ? '…' : lastSaved ? '✓' : ''}</small><strong>{servingScore} – {receivingScore}{data.format !== 'singles' && <> – <em>{match.serveNumber}</em></>}</strong>{!demoData && <button type="button" aria-label="Refresh score" onClick={() => setRefreshIndex((value) => value + 1)}><RefreshCw size={16} /></button>}</div>
+      <div className="rally-call"><small className={`rally-save-indicator ${saveState}`} role="status" aria-live="polite">{saveState === 'saved' || saveState === 'local' ? <CheckCircle2 size={14} /> : saveState === 'saving' ? <CloudUpload size={14} /> : saveState === 'offline' || saveState === 'error' ? <CloudOff size={14} /> : null}{saveLabel}</small><strong>{servingScore} – {receivingScore}{data.format !== 'singles' && <> – <em>{match.serveNumber}</em></>}</strong>{!demoData && <button type="button" aria-label="Refresh score" onClick={() => setRefreshIndex((value) => value + 1)}><RefreshCw size={16} /></button>}</div>
       {finalWinner && <div className="rally-winner"><Trophy size={19} /> Winner: <strong>{finalWinner.teamName}</strong></div>}
       <div className="rally-scoreboard">{([data.team1, data.team2] as const).map((team, index) => {
         const side = (index + 1) as 1 | 2
@@ -159,14 +187,15 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, demoData, 
         </section>
       })}</div>
       <button type="button" className="rally-serve-zone" aria-label={`Change serve from ${servingTeam === 1 ? data.team1?.teamName : data.team2?.teamName}, server ${match.serveNumber}, to ${nextServeTeam?.teamName}, server ${nextServeNumber}`} disabled={!canScore || canFinalize || busy} onClick={() => void rally('lost-serve')}><span className="rally-serve-team">{servingTeam === 1 ? data.team1?.teamName : data.team2?.teamName}</span><span className="rally-server-number">{match.serveNumber}</span><span className="rally-serve-next">→ {nextServeTeam?.teamName} · {nextServeNumber}</span></button>
-      {canScore && !canFinalize && <><button className="rally-correct-toggle" type="button" onClick={() => setShowCorrection((shown) => !shown)}>Fix serve</button>{showCorrection && <div className="rally-correction"><span>SELECT THE ACTUAL SERVER</span><div>{([1, 2] as const).flatMap((team) => (data.format === 'singles' ? [1] : [1, 2]).map((number) => <button type="button" key={`${team}-${number}`} disabled={busy || (match.serveTeam === team && match.serveNumber === number)} onClick={() => void rally('set-serve', team, number as 1 | 2)}>Team {team} · Server {number}</button>))}</div></div>}</>}
-      <div className="rally-tracker"><div className="rally-tracker-heading"><span>POINTS</span><strong>To {data.pointsToWin} · +{data.winBy}</strong></div>{([data.team1, data.team2] as const).map((team, index) => {
+      {canScore && !canFinalize && <><button className="rally-correct-toggle" type="button" onClick={() => setShowCorrection((shown) => !shown)}>Fix serve</button>{showCorrection && <div className="rally-correction"><span>SELECT THE ACTUAL SERVER</span><div>{([1, 2] as const).flatMap((team) => (data.format === 'singles' ? [1] : [1, 2]).map((number) => <button type="button" key={`${team}-${number}`} disabled={busy || !canScore || (match.serveTeam === team && match.serveNumber === number)} onClick={() => void rally('set-serve', team, number as 1 | 2)}>Team {team} · Server {number}</button>))}</div></div>}</>}
+      <div className="rally-tracker"><div className="rally-tracker-heading"><span>POINTS</span><div><strong>To {data.pointsToWin} · +{data.winBy}</strong><button type="button" aria-label="Show scoring history" onClick={() => setShowHistory(true)}><History size={17} /></button></div></div>{([data.team1, data.team2] as const).map((team, index) => {
         const score = index === 0 ? match.score1 : match.score2
         return <div className="rally-tracker-row" key={index}><span>{team?.teamName || `Team ${index + 1}`}</span><div>{Array.from({ length: score }, (_, point) => <b className={point + 1 >= data.pointsToWin - 1 ? 'near' : ''} key={point}><Check size={11} /></b>)}</div><strong>{score}</strong></div>
       })}</div>
       {error && <div className="score-error">{error}</div>}
-      <div className="rally-footer"><button type="button" disabled={!canScore || !match.canUndo || busy} onClick={() => void rally('undo')}><RotateCcw size={20} /> Undo</button>{canFinalize && match.status !== 'final' && <button type="button" className="rally-end" onClick={() => setDismissedVersion(null)}><Trophy size={18} /> End game</button>}{match.status === 'final' && <div><CheckCircle2 size={19} /> Result confirmed{!demoData && match.stage === 'playoff' ? ' · bracket advanced' : ''}</div>}</div>
-      {finishPrompt && <div className="rally-dialog-backdrop"><div className="rally-dialog" role="dialog" aria-modal="true" aria-labelledby="rally-dialog-title"><span>MATCH POINT</span><h2 id="rally-dialog-title">End this game?</h2><p>{match.score1}–{match.score2} meets the organizer’s rule: first to {data.pointsToWin}, win by {data.winBy}. Confirm the winner to update the tournament.</p><strong>{match.score1 > match.score2 ? data.team1?.teamName : data.team2?.teamName}</strong><div><button type="button" onClick={() => setDismissedVersion(match.version)}>Review score</button><button type="button" disabled={busy} onClick={() => void finalize()}>Confirm winner</button></div></div></div>}
+      <div className="rally-footer">{match.status !== 'final' && <button type="button" disabled={!canScore || !match.canUndo || busy} onClick={() => void rally('undo')}><RotateCcw size={20} /> Undo</button>}{canFinalize && match.status !== 'final' && <button type="button" className="rally-end" onClick={() => setDismissedVersion(null)}><Trophy size={18} /> End game</button>}{match.status === 'final' && (onNextGame ? <button type="button" className="rally-next-game" onClick={onNextGame}>Next game <ArrowRight size={20} /></button> : onBack ? <button type="button" className="rally-next-game" onClick={onBack}>Games <ArrowRight size={20} /></button> : <div><CheckCircle2 size={19} /> Result confirmed</div>)}</div>
+      {showHistory && <div className="rally-history-backdrop"><button type="button" className="rally-history-scrim" aria-label="Close scoring history" onClick={() => setShowHistory(false)} /><section className="rally-history-sheet" role="dialog" aria-modal="true" aria-labelledby="rally-history-title"><div className="rally-history-title"><h2 id="rally-history-title">Recent actions</h2><button type="button" aria-label="Close scoring history" onClick={() => setShowHistory(false)}><X size={20} /></button></div>{historyEvents.length ? <div className="rally-history-list">{historyEvents.map((event) => <div key={event.id}><span>{eventLabel(event)}</span><strong>{event.score1}–{event.score2}</strong><small>{new Date(event.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small></div>)}</div> : <p>No scoring actions yet.</p>}</section></div>}
+      {finishPrompt && <div className="rally-dialog-backdrop"><div className="rally-dialog" role="dialog" aria-modal="true" aria-labelledby="rally-dialog-title"><span>MATCH POINT</span><h2 id="rally-dialog-title">End this game?</h2><p>{match.score1}–{match.score2} meets the organizer’s rule: first to {data.pointsToWin}, win by {data.winBy}. Confirm the winner to update the tournament.</p><strong>{match.score1 > match.score2 ? data.team1?.teamName : data.team2?.teamName}</strong>{!demoData && (!online || !serverReachable) && <p>Reconnect to confirm this result.</p>}<div><button type="button" onClick={() => setDismissedVersion(match.version)}>Review score</button><button type="button" disabled={busy || (!demoData && (!online || !serverReachable))} onClick={() => void finalize()}>Confirm winner</button></div></div></div>}
     </> : <div className="score-loading">{invalidScoreKey ? 'This scoring QR link is incomplete.' : error || 'Loading match…'}</div>}
   </div></main>
 }
