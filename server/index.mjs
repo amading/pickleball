@@ -325,11 +325,13 @@ function publicMatch(match) {
   const visible = { ...match }
   delete visible.scoreToken
   delete visible.scoreEvents
+  delete visible.rallyHistory
   return visible
 }
 
-function matchRecord(base) {
-  return { ...base, score1: 0, score2: 0, status: 'scheduled', winner: null, version: 0, scoreToken: randomBytes(24).toString('base64url') }
+function matchRecord(base, format = 'doubles') {
+  return { ...base, score1: 0, score2: 0, status: 'scheduled', winner: null, version: 0,
+    serveTeam: 1, serveNumber: format === 'singles' ? 1 : 2, rallyHistory: [], scoreToken: randomBytes(24).toString('base64url') }
 }
 
 function allMatches(category) {
@@ -485,7 +487,7 @@ function createDraw(category) {
   const courtLabel = category.courts === 1 ? 'Court 1' : `Courts 1-${category.courts}`
   const pools = Array.from({ length: poolCount }, (_, index) => ({ name: `Pool ${String.fromCharCode(65 + index)}`, court: courtLabel, teams: [] }))
   teams.forEach((team, index) => { pools[index % poolCount].teams.push({ id: team.id }) })
-  const pairsByPool = pools.map((pool) => roundRobinPairs(pool.teams).map(([first, second]) => matchRecord({ id: randomUUID(), stage: 'pool', pool: pool.name, team1: first.id, team2: second.id })))
+  const pairsByPool = pools.map((pool) => roundRobinPairs(pool.teams).map(([first, second]) => matchRecord({ id: randomUUID(), stage: 'pool', pool: pool.name, team1: first.id, team2: second.id }, category.format)))
   return { pools, matches: scheduleWaves(pairsByPool, category.courts), publishedAt: new Date().toISOString() }
 }
 
@@ -544,7 +546,7 @@ function createPlayoff(category) {
         team1: first, team2: second,
         source1: roundIndex === 0 ? null : prior[index * 2].id,
         source2: roundIndex === 0 ? null : prior[index * 2 + 1].id,
-      })
+      }, category.format)
       if (first && !second) { match.status = 'bye'; match.winner = first }
       if (!first && second) { match.team1 = second; match.team2 = null; match.status = 'bye'; match.winner = second }
       return match
@@ -552,7 +554,7 @@ function createPlayoff(category) {
     rounds.push({ name: matchCount === 1 ? 'Final' : matchCount === 2 ? 'Semifinals' : matchCount === 4 ? 'Quarterfinals' : `Round of ${matchCount * 2}`, matches })
     prior = matches
   }
-  advancePlayoff(rounds)
+  advancePlayoff(rounds, category.format)
   return { rounds, seeded, publishedAt: new Date().toISOString() }
 }
 
@@ -560,7 +562,7 @@ function dependentMatch(rounds, match) {
   return rounds.flatMap((round) => round.matches).find((item) => item.source1 === match.id || item.source2 === match.id)
 }
 
-function advancePlayoff(rounds) {
+function advancePlayoff(rounds, format = 'doubles') {
   const byId = new Map(rounds.flatMap((round) => round.matches.map((match) => [match.id, match])))
   for (const round of rounds.slice(1)) {
     for (const match of round.matches) {
@@ -568,7 +570,9 @@ function advancePlayoff(rounds) {
       const second = byId.get(match.source2)?.winner || null
       if (match.team1 !== first || match.team2 !== second) {
         match.team1 = first; match.team2 = second
-        match.score1 = 0; match.score2 = 0; match.status = 'scheduled'; match.winner = null; match.version += 1
+        match.score1 = 0; match.score2 = 0; match.status = 'scheduled'; match.winner = null
+        match.serveTeam = 1; match.serveNumber = format === 'singles' ? 1 : 2
+        match.rallyHistory = []; match.scoreEvents = []; match.version += 1
       }
     }
   }
@@ -653,6 +657,9 @@ for (const category of database.categories) {
   }
   for (const match of allMatches(category)) {
     if (!Array.isArray(match.scoreEvents)) { match.scoreEvents = []; migrated = true }
+    if (!Array.isArray(match.rallyHistory)) { match.rallyHistory = []; migrated = true }
+    if (match.serveTeam !== 1 && match.serveTeam !== 2) { match.serveTeam = 1; migrated = true }
+    if (match.serveNumber !== 1 && match.serveNumber !== 2) { match.serveNumber = category.format === 'singles' ? 1 : 2; migrated = true }
     if (!match.scoreToken) { match.scoreToken = randomBytes(24).toString('base64url'); migrated = true }
     if (match.score1 === undefined) { match.score1 = 0; migrated = true }
     if (match.score2 === undefined) { match.score2 = 0; migrated = true }
@@ -925,12 +932,59 @@ const server = http.createServer(async (req, res) => {
         const match = allMatches(category).find((item) => item.id === parts[4])
         if (!match) return send(res, 404, { error: 'Match not found.' })
         const teamById = new Map(category.registrations.map((item) => [item.id, teamView(item)]))
+        const scoringView = () => ({ ...publicMatch(match), scoreEvents: match.scoreEvents ?? [], canUndo: Boolean(match.rallyHistory?.length) })
         if (req.method === 'GET' && parts.length === 5 && !canSeeBoard(req, category, user) && !stationAccess && !sameSecret(req.headers['x-score-token'], match.scoreToken)) return send(res, 403, { error: 'This board is private. Enter your team code on the category page.' })
         if (req.method === 'GET' && parts.length === 5) return send(res, 200, {
-          categoryId: category.id, categoryTitle: category.title, pointsToWin: category.pointsToWin ?? 11,
-          winBy: category.winBy ?? 2, match: { ...publicMatch(match), scoreEvents: match.scoreEvents ?? [] },
+          categoryId: category.id, categoryTitle: category.title, format: category.format, pointsToWin: category.pointsToWin ?? 11,
+          winBy: category.winBy ?? 2, match: scoringView(),
           team1: teamById.get(match.team1) || null, team2: teamById.get(match.team2) || null,
         })
+        if (req.method === 'PATCH' && parts[5] === 'rally') {
+          if (!user && !stationAccess && !sameSecret(req.headers['x-score-token'], match.scoreToken)) return send(res, 403, { error: 'Scan the organizer QR code to score this match.' })
+          if (match.status === 'final' || match.status === 'bye') throw new Error('This match is already decided.')
+          if (match.stage === 'pool' && category.playoff) throw new Error('Pool scores are locked after the playoff bracket is published.')
+          if (!match.team1 || !match.team2) throw new Error('Both opponents must be known before scoring.')
+          const input = await body(req)
+          if (Number(input.version) !== (match.version ?? 0)) return send(res, 409, { error: 'Score changed on another device. Refresh and try again.' })
+          if (!['point', 'lost-serve', 'undo', 'set-serve'].includes(input.action)) throw new Error('Choose a valid rally action.')
+          match.scoreEvents ??= []
+          match.rallyHistory ??= []
+          const before = { score1: match.score1, score2: match.score2, status: match.status, serveTeam: match.serveTeam, serveNumber: match.serveNumber }
+          let eventTeam = null
+          let change = 0
+          if (input.action === 'undo') {
+            const previous = match.rallyHistory.pop()
+            if (!previous) throw new Error('There is no rally action to undo.')
+            Object.assign(match, previous)
+          } else {
+            if (validFinal(match.score1, match.score2, category.pointsToWin ?? 11, category.winBy ?? 2)) throw new Error('Game point is reached. Confirm the result or undo the last action.')
+            if (input.action === 'point') {
+              if (Number(input.team) !== match.serveTeam) throw new Error('Only the serving team can score. Tap the yellow server number to change serve.')
+              const key = match.serveTeam === 1 ? 'score1' : 'score2'
+              if (match[key] >= 999) throw new Error('Score limit reached.')
+              match[key] += 1
+              eventTeam = match.serveTeam
+              change = 1
+            } else if (input.action === 'lost-serve') {
+              if (category.format !== 'singles' && match.serveNumber === 1) match.serveNumber = 2
+              else { match.serveTeam = match.serveTeam === 1 ? 2 : 1; match.serveNumber = 1 }
+              eventTeam = match.serveTeam
+            } else {
+              if (![1, 2].includes(Number(input.team)) || ![1, 2].includes(Number(input.serveNumber))) throw new Error('Choose a team and server number.')
+              if (category.format === 'singles' && Number(input.serveNumber) !== 1) throw new Error('Singles has one server per side.')
+              match.serveTeam = Number(input.team)
+              match.serveNumber = Number(input.serveNumber)
+              eventTeam = match.serveTeam
+            }
+            match.rallyHistory.push(before)
+            match.status = 'live'
+          }
+          match.version = (match.version ?? 0) + 1
+          match.scoreEvents.push({ id: randomUUID(), action: input.action, team: eventTeam, change,
+            score1: match.score1, score2: match.score2, serveTeam: match.serveTeam, serveNumber: match.serveNumber, at: new Date().toISOString() })
+          await save()
+          return send(res, 200, scoringView())
+        }
         if (req.method === 'PATCH' && parts[5] === 'score') {
           const admin = Boolean(user)
           const token = req.headers['x-score-token']
@@ -945,6 +999,7 @@ const server = http.createServer(async (req, res) => {
           if (Number(input.version) !== (match.version ?? 0)) return send(res, 409, { error: 'Score changed on another device. Refresh and try again.' })
           if (!Number.isInteger(first) || !Number.isInteger(second) || first < 0 || second < 0 || first > 999 || second > 999) throw new Error('Scores must be whole numbers from 0 to 999.')
           if (!['live', 'final'].includes(input.status)) throw new Error('Choose live or final score status.')
+          if (!admin && (input.status !== 'final' || first !== match.score1 || second !== match.score2)) throw new Error('Use the rally controls to score. A QR scorer can only confirm the current final result.')
           if (input.status === 'final' && !validFinal(first, second, category.pointsToWin ?? 11, category.winBy ?? 2)) throw new Error(`Not a valid final: first to ${category.pointsToWin ?? 11}, win by ${category.winBy ?? 2} (past ${category.pointsToWin ?? 11} the lead must be exactly ${category.winBy ?? 2}).`)
           if (input.status !== 'final' && match.status === 'final' && match.stage === 'playoff') {
             const next = dependentMatch(category.playoff.rounds, match)
@@ -954,6 +1009,7 @@ const server = http.createServer(async (req, res) => {
           const previousFirst = match.score1
           const previousSecond = match.score2
           match.score1 = first; match.score2 = second; match.status = input.status
+          if (first !== previousFirst || second !== previousSecond) match.rallyHistory = []
           if (first !== previousFirst || second !== previousSecond) {
             match.scoreEvents ??= []
             match.scoreEvents.push({ id: randomUUID(), team: first !== previousFirst && second === previousSecond ? 1 : second !== previousSecond && first === previousFirst ? 2 : null,
@@ -962,13 +1018,13 @@ const server = http.createServer(async (req, res) => {
           match.winner = input.status === 'final' ? first > second ? match.team1 : match.team2 : null
           const wasFinal = previousStatus === 'final'
           match.version = (match.version ?? 0) + 1
-          if (match.stage === 'playoff') advancePlayoff(category.playoff.rounds)
+          if (match.stage === 'playoff') advancePlayoff(category.playoff.rounds, category.format)
           const names = new Map(category.registrations.map((item) => [item.id, item.teamName]))
           const label = `${match.stage === 'pool' ? `${match.pool} game ${match.game}` : 'Playoff'}: ${names.get(match.team1)} ${match.score1}-${match.score2} ${names.get(match.team2)}`
           if (input.status === 'final') audit(admin ? user : null, 'Final score', category, label)
           else if (wasFinal) audit(user, 'Reopened a final score', category, label)
           await save()
-          return send(res, 200, { ...publicMatch(match), scoreEvents: match.scoreEvents ?? [] })
+          return send(res, 200, scoringView())
         }
       }
       if (req.method === 'POST' && parts[3] === 'register') {

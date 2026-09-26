@@ -21,9 +21,9 @@ const sampleTeams: Record<string, NonNullable<ScoringResponse['team1']>> = {
   f: { id: 'f', teamName: 'Ace Makers', players: [{ name: 'Drew Ramos', photo: '' }, { name: 'Casey Torres', photo: '' }] },
 }
 const sampleMatches: ScoringMatch[] = [
-  { id: 'sample-1', stage: 'pool', pool: 'Pool A', game: 1, court: 'Court 1', team1: 'a', team2: 'b', score1: 10, score2: 9, status: 'live', winner: null, version: 0, scoreEvents: [] },
-  { id: 'sample-2', stage: 'pool', pool: 'Pool B', game: 2, court: 'Court 2', team1: 'c', team2: 'd', score1: 0, score2: 0, status: 'scheduled', winner: null, version: 0, scoreEvents: [] },
-  { id: 'sample-3', stage: 'pool', pool: 'Pool C', game: 3, court: 'Court 3', team1: 'e', team2: 'f', score1: 0, score2: 0, status: 'scheduled', winner: null, version: 0, scoreEvents: [] },
+  { id: 'sample-1', stage: 'pool', pool: 'Pool A', game: 1, court: 'Court 1', team1: 'a', team2: 'b', score1: 10, score2: 9, status: 'live', winner: null, version: 0, serveTeam: 1, serveNumber: 2, scoreEvents: [], canUndo: false },
+  { id: 'sample-2', stage: 'pool', pool: 'Pool B', game: 2, court: 'Court 2', team1: 'c', team2: 'd', score1: 0, score2: 0, status: 'scheduled', winner: null, version: 0, serveTeam: 1, serveNumber: 2, scoreEvents: [], canUndo: false },
+  { id: 'sample-3', stage: 'pool', pool: 'Pool C', game: 3, court: 'Court 3', team1: 'e', team2: 'f', score1: 0, score2: 0, status: 'scheduled', winner: null, version: 0, serveTeam: 1, serveNumber: 2, scoreEvents: [], canUndo: false },
 ]
 
 export default function CourtStation({ stationKey, demo = false }: { stationKey: string; demo?: boolean }) {
@@ -53,7 +53,7 @@ export default function CourtStation({ stationKey, demo = false }: { stationKey:
 
   const activeStation = demo ? { title: 'Mobile scoring preview', courts: 3, matches: demoMatches.map((match) => ({ ...match, team1Name: sampleTeams[match.team1 ?? '']?.teamName ?? 'Waiting', team2Name: sampleTeams[match.team2 ?? '']?.teamName ?? 'Waiting' })) } : station
   const chosen = demoMatches.find((match) => match.id === matchId)
-  if (matchId) return <LiveScoring scoreKey={`${categoryId || 'demo'}.${matchId}.${token || 'sample'}`} stationToken={demo ? undefined : token} onBack={() => { setMatchId(''); setRefresh((value) => value + 1) }} demoData={demo && chosen ? { categoryId: 'demo', categoryTitle: 'Mobile scoring preview', pointsToWin: 11, winBy: 2, match: chosen, team1: sampleTeams[chosen.team1 ?? ''] ?? null, team2: sampleTeams[chosen.team2 ?? ''] ?? null } : undefined} onDemoSave={(updated) => setDemoMatches((matches) => matches.map((match) => match.id === updated.id ? updated : match))} />
+  if (matchId) return <LiveScoring scoreKey={`${categoryId || 'demo'}.${matchId}.${token || 'sample'}`} stationToken={demo ? undefined : token} onBack={() => { setMatchId(''); setRefresh((value) => value + 1) }} demoData={demo && chosen ? { categoryId: 'demo', categoryTitle: 'Mobile scoring preview', format: 'doubles', pointsToWin: 11, winBy: 2, match: chosen, team1: sampleTeams[chosen.team1 ?? ''] ?? null, team2: sampleTeams[chosen.team2 ?? ''] ?? null } : undefined} onDemoSave={demo ? (updated) => setDemoMatches((matches) => matches.map((match) => match.id === updated.id ? updated : match)) : undefined} />
 
   const courts = Array.from({ length: activeStation?.courts ?? 0 }, (_, index) => `Court ${index + 1}`)
   const games = activeStation?.matches.filter((match) => match.court === court && match.status !== 'bye') ?? []

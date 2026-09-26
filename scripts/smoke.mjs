@@ -33,18 +33,19 @@ function assertNoTokens(value, label) {
 
 async function scoreFinal(categoryId, match, winnerIndex = 1) {
   await expectFail(`/categories/${categoryId}/matches/${match.id}/score`, 'PATCH', { score1: 1, score2: 0, status: 'live', version: match.version }, 'Scan')
-  let updated = await request(`/categories/${categoryId}/matches/${match.id}/score`, 'PATCH', {
-    score1: winnerIndex === 1 ? 1 : 0,
-    score2: winnerIndex === 2 ? 1 : 0,
-    status: 'live',
-    version: match.version,
-  }, false, { 'x-score-token': match.scoreToken })
+  const headers = { 'x-score-token': match.scoreToken }
+  let updated = match
+  if (updated.serveTeam !== winnerIndex) updated = await request(`/categories/${categoryId}/matches/${match.id}/rally`, 'PATCH', { action: 'lost-serve', version: updated.version }, false, headers)
+  if (updated.serveTeam !== winnerIndex) updated = await request(`/categories/${categoryId}/matches/${match.id}/rally`, 'PATCH', { action: 'lost-serve', version: updated.version }, false, headers)
+  while ((winnerIndex === 1 ? updated.score1 : updated.score2) < 3) {
+    updated = await request(`/categories/${categoryId}/matches/${match.id}/rally`, 'PATCH', { action: 'point', team: winnerIndex, version: updated.version }, false, headers)
+  }
   updated = await request(`/categories/${categoryId}/matches/${match.id}/score`, 'PATCH', {
-    score1: winnerIndex === 1 ? 3 : 0,
-    score2: winnerIndex === 2 ? 3 : 0,
+    score1: updated.score1,
+    score2: updated.score2,
     status: 'final',
     version: updated.version,
-  }, false, { 'x-score-token': match.scoreToken })
+  }, false, headers)
   if (updated.status !== 'final' || !updated.winner) throw new Error('Final scoring did not save a winner.')
   return updated
 }
@@ -181,16 +182,25 @@ if (station.courts !== 1 || station.matches.length !== 10 || !station.matches[0]
 assertNoTokens(station, 'Court station')
 const stationMatch = adminCategory.draw.matches[0]
 const stationHeaders = { 'x-station-token': adminCategory.stationToken }
-const stationScore = await request(`/categories/${category.id}/matches/${stationMatch.id}/score`, 'PATCH', { score1: 1, score2: 0, status: 'live', version: stationMatch.version }, false, stationHeaders)
+await expectFail(`/categories/${category.id}/matches/${stationMatch.id}/rally`, 'PATCH', { action: 'point', team: 2, version: stationMatch.version }, 'Only the serving team', stationHeaders)
+const stationScore = await request(`/categories/${category.id}/matches/${stationMatch.id}/rally`, 'PATCH', { action: 'point', team: 1, version: stationMatch.version }, false, stationHeaders)
 if (stationScore.scoreEvents?.at(-1)?.team !== 1 || stationScore.scoreEvents.at(-1).score1 !== 1) throw new Error('Court station point history did not save.')
+if (stationScore.serveTeam !== 1 || stationScore.serveNumber !== 2) throw new Error('Starting doubles server was not Server 2.')
+const corrected = await request(`/categories/${category.id}/matches/${stationMatch.id}/rally`, 'PATCH', { action: 'set-serve', team: 1, serveNumber: 1, version: stationScore.version }, false, stationHeaders)
+const secondServe = await request(`/categories/${category.id}/matches/${stationMatch.id}/rally`, 'PATCH', { action: 'lost-serve', version: corrected.version }, false, stationHeaders)
+if (secondServe.serveTeam !== 1 || secondServe.serveNumber !== 2) throw new Error('First server did not pass to Server 2.')
+const sideOut = await request(`/categories/${category.id}/matches/${stationMatch.id}/rally`, 'PATCH', { action: 'lost-serve', version: secondServe.version }, false, stationHeaders)
+if (sideOut.serveTeam !== 2 || sideOut.serveNumber !== 1) throw new Error('Second server did not side out to Team 2 Server 1.')
+const restored = await request(`/categories/${category.id}/matches/${stationMatch.id}/rally`, 'PATCH', { action: 'undo', version: sideOut.version }, false, stationHeaders)
+if (restored.serveTeam !== 1 || restored.serveNumber !== 2) throw new Error('Undo did not restore the prior server.')
 const stationView = await request(`/categories/${category.id}/matches/${stationMatch.id}`, 'GET', undefined, false, stationHeaders)
-if (stationView.match.scoreEvents?.length !== 1) throw new Error('Saved point history did not load on another phone.')
+if (stationView.match.scoreEvents?.length < 3) throw new Error('Saved point history did not load on another phone.')
 adminCategories = await request('/admin/categories', 'GET', undefined, true)
 adminCategory = adminCategories.find((item) => item.id === category.id)
 
 const firstMatch = adminCategory.draw.matches[0]
 await expectFail(`/categories/${category.id}/draw`, 'DELETE', undefined, 'Organizer login')
-await expectFail(`/categories/${category.id}/matches/${firstMatch.id}/score`, 'PATCH', { score1: 5, score2: 1, status: 'final', version: firstMatch.version }, 'valid final', { 'x-score-token': firstMatch.scoreToken })
+await expectFail(`/categories/${category.id}/matches/${firstMatch.id}/score`, 'PATCH', { score1: 5, score2: 1, status: 'final', version: firstMatch.version }, 'valid final', { Authorization: `Bearer ${token}` })
 
 for (const [index, match] of adminCategory.draw.matches.entries()) {
   await scoreFinal(category.id, match, index % 3 === 0 ? 2 : 1)
