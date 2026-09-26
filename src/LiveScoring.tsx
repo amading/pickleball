@@ -2,7 +2,6 @@ import { ArrowLeft, Check, CheckCircle2, RefreshCw, RotateCcw, Trophy } from 'lu
 import { useEffect, useState } from 'react'
 import './liveScoring.css'
 import './rallyMinimal.css'
-import { avatarSrc } from './liveTypes'
 import { authHeaders, readToken } from './adminApi'
 
 type Team = { id: string; teamName: string; players: { name: string; photo: string }[] }
@@ -155,7 +154,6 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, demoData, 
         return <section className={`rally-side ${serving && match.status !== 'final' ? 'serving' : ''} ${finalWinner?.id === team?.id ? 'winner' : ''}`} key={side}>
           <div className="rally-side-heading">{serving && match.status !== 'final' && <span>● SERVING</span>}</div>
           <h2>{team?.teamName || 'Waiting for opponent'}</h2>
-          <div className="rally-players">{team?.players.map((player) => <span key={player.name}><img src={avatarSrc(player.name, player.photo)} alt="" />{player.name}</span>)}</div>
           <button type="button" className={`rally-score-number ${nearTarget(score) && !canFinalize ? 'game-point' : ''} ${canFinalize && score > (side === 1 ? match.score2 : match.score1) ? 'winning' : ''}`} aria-label={`Score point for ${team?.teamName || `Team ${side}`}`} disabled={!canTap} onClick={() => void rally('point', side)}>{score}</button>
           <small className="rally-tap-hint">{match.status === 'final' ? 'FINAL' : canFinalize ? 'MATCH POINT' : serving ? 'TAP +1' : ''}</small>
         </section>
