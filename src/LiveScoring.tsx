@@ -154,7 +154,7 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, demoData, 
         return <section className={`rally-side ${serving && match.status !== 'final' ? 'serving' : ''} ${finalWinner?.id === team?.id ? 'winner' : ''}`} key={side}>
           <div className="rally-side-heading">{serving && match.status !== 'final' && <span>● SERVING</span>}</div>
           <h2>{team?.teamName || 'Waiting for opponent'}</h2>
-          <button type="button" className={`rally-score-number ${nearTarget(score) && !canFinalize ? 'game-point' : ''} ${canFinalize && score > (side === 1 ? match.score2 : match.score1) ? 'winning' : ''}`} aria-label={`Score point for ${team?.teamName || `Team ${side}`}`} disabled={!canTap} onClick={() => void rally('point', side)}>{score}</button>
+          <button type="button" className={`rally-score-number ${score >= 100 ? 'triple' : ''} ${nearTarget(score) && !canFinalize ? 'game-point' : ''} ${canFinalize && score > (side === 1 ? match.score2 : match.score1) ? 'winning' : ''}`} aria-label={`Score point for ${team?.teamName || `Team ${side}`}`} disabled={!canTap} onClick={() => void rally('point', side)}>{score}</button>
           <small className="rally-tap-hint">{match.status === 'final' ? 'FINAL' : canFinalize ? 'MATCH POINT' : serving ? 'TAP +1' : ''}</small>
         </section>
       })}</div>
