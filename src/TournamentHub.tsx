@@ -142,6 +142,7 @@ export function OrganizerHub() {
   const [form, setForm] = useState<'create' | 'edit' | null>(null)
   const [editingEntry, setEditingEntry] = useState('')
   const [entryFilter, setEntryFilter] = useState<'all' | 'pending' | 'unpaid' | 'approved'>('all')
+  const [adminSection, setAdminSection] = useState<'overview' | 'teams' | 'draw'>('overview')
   const [publicBase, setPublicBase] = useState(window.location.origin)
   const selected = categories.find((item) => item.id === selectedId) ?? categories[0]
 
@@ -207,7 +208,7 @@ export function OrganizerHub() {
     } else {
       void run(async () => {
         const created = await api<Category>('/categories', { method: 'POST', body: JSON.stringify(settings) }, token)
-        setForm(null); setSelectedId(created.id)
+        setForm(null); setSelectedId(created.id); setAdminSection('overview')
       }, 'Category is live. Copy its link and share it with players.')
     }
   }
@@ -279,29 +280,35 @@ export function OrganizerHub() {
     {form === 'create' && <CategoryForm initial={newCategory} busy={busy} onSubmit={saveCategory} onClose={() => setForm(null)} />}
     <div className="hub-section-heading hub-category-heading"><div><span className="hub-eyebrow">YOUR CATEGORIES</span><h2>Registration board</h2></div><div className="hub-heading-tools"><button className="hub-refresh" type="button" onClick={() => exportFile('/admin/backup', 'pbb-backup.json')}><Download size={15} /> Full backup</button><button className="hub-refresh" type="button" onClick={() => void refresh()}><RefreshCw size={15} /> Refresh</button></div></div>
     {categories.length === 0 ? <div className="hub-empty">No categories yet. Create one to open registration.</div> : <>
-      <div className="hub-category-tabs">{categories.map((category) => <button type="button" className={category.id === selected?.id ? 'active' : ''} key={category.id} onClick={() => { setSelectedId(category.id); setForm((current) => current === 'edit' ? null : current); setEditingEntry('') }}>{category.title}<small>{category.registrations?.length ?? 0} entries</small></button>)}</div>
+      <div className="hub-category-tabs">{categories.map((category) => <button type="button" className={category.id === selected?.id ? 'active' : ''} key={category.id} onClick={() => { setSelectedId(category.id); setForm((current) => current === 'edit' ? null : current); setEditingEntry(''); setAdminSection('overview') }}>{category.title}<small>{category.registrations?.length ?? 0} entries</small></button>)}</div>
       {selected && <>
+        <nav className="hub-admin-section-tabs" aria-label="Organizer category sections">
+          <button type="button" className={adminSection === 'overview' ? 'active' : ''} aria-current={adminSection === 'overview' ? 'page' : undefined} onClick={() => setAdminSection('overview')}><span>01</span> Overview</button>
+          <button type="button" className={adminSection === 'teams' ? 'active' : ''} aria-current={adminSection === 'teams' ? 'page' : undefined} onClick={() => setAdminSection('teams')}><span>02</span> Registrations <b>{entries.length}</b></button>
+          <button type="button" className={adminSection === 'draw' ? 'active' : ''} aria-current={adminSection === 'draw' ? 'page' : undefined} onClick={() => setAdminSection('draw')}><span>03</span> Draw & scoring {selected.draw && <i />}</button>
+        </nav>
+        {adminSection === 'overview' && <div className="hub-overview-grid"><div className="hub-overview-main">
         <div className="hub-category-summary">
           <div><span className="hub-eyebrow">{selected.division.toUpperCase()} · {labelFormat(selected.format).toUpperCase()}</span><h2>{selected.title}</h2><p>{labelEligibility(selected.eligibility)} · ₱{selected.fee.toLocaleString()} / player{selected.requirePayment ? ' (payment required)' : ''} · {selected.capacity} team slots · {selected.poolSize} teams/pool · {selected.courts} courts · First to {selected.pointsToWin}, win by {selected.winBy} · {qualifyRule(selected)} to playoffs</p><small className="hub-share-address">Phone link: {registrationUrl(selected.id, publicBase)}</small>{selected.ended ? <span className="hub-ended-pill">EVENT ENDED · TEAM CODES EXPIRED</span> : selected.privateBoard && <span className="hub-private-pill"><LockKeyhole size={11} /> PRIVATE BOARD · TEAM CODE REQUIRED</span>}</div>
           <div className="hub-summary-actions">
             <button type="button" onClick={() => void copyLink(selected.id)}><Copy size={16} /> Copy registration link</button>
             <a href={registrationUrl(selected.id)} target="_blank" rel="noreferrer">Preview player page <ArrowRight size={16} /></a>
-            <button type="button" onClick={() => { setForm('edit'); setError('') }}><Settings2 size={16} /> Edit settings</button>
+            <button type="button" onClick={() => { setForm('edit'); setError(''); setAdminSection('overview') }}><Settings2 size={16} /> Edit settings</button>
             <button type="button" className={selected.ended ? '' : 'hub-end'} disabled={busy} onClick={() => endEvent(!selected.ended)}>{selected.ended ? <><RotateCcw size={16} /> Reopen event</> : <><Flag size={16} /> End event</>}</button>
             <button type="button" className="hub-delete" disabled={busy} onClick={deleteCategory}><Trash2 size={16} /> Delete</button>
           </div>
         </div>
         {form === 'edit' && <CategoryForm key={selected.id} initial={settingsOf(selected)} editing={selected} busy={busy} onSubmit={saveCategory} onClose={() => setForm(null)} />}
-        <div className="hub-admin-stats">
-          <div><strong>{entries.length}</strong><span>Total entries</span></div>
-          <div><strong>{entries.filter((item) => item.status === 'pending').length}</strong><span>Need review</span></div>
-          <div><strong>{unpaid.length}</strong><span>Not yet paid</span></div>
-          <div><strong>{approvedCount}</strong><span>Approved teams</span></div>
-        </div>
         <div className="hub-export-row"><span>EXPORT CSV</span>
           <button type="button" onClick={() => exportFile(`/categories/${selected.id}/export?kind=registrations`, 'registrations.csv')}><Download size={14} /> Registrations & payments</button>
           <button type="button" disabled={!selected.draw} onClick={() => exportFile(`/categories/${selected.id}/export?kind=results`, 'results.csv')}><Download size={14} /> Match results</button>
           <button type="button" disabled={!selected.draw} onClick={() => exportFile(`/categories/${selected.id}/export?kind=standings`, 'standings.csv')}><Download size={14} /> Standings</button>
+        </div>
+        </div><div className="hub-overview-side"><div className="hub-admin-stats">
+          <div><strong>{entries.length}</strong><span>Total entries</span></div>
+          <div><strong>{entries.filter((item) => item.status === 'pending').length}</strong><span>Need review</span></div>
+          <div><strong>{unpaid.length}</strong><span>Not yet paid</span></div>
+          <div><strong>{approvedCount}</strong><span>Approved teams</span></div>
         </div>
         <div className="hub-qualification-control">
           <div><span className="hub-eyebrow">PLAYOFF RULE</span><strong>{qualifyRule(selected)}</strong><small>{selected.qualifyMode === 'top' ? 'Seeded bracket: pool winners meet runners-up from other pools first.' : `Random bracket among teams with ${selected.winsToQualify}+ of ${maxWins} possible pool wins.`} Ties: head-to-head, then point difference.</small></div>
@@ -316,12 +323,10 @@ export function OrganizerHub() {
             </>}
           </div>
         </div>
-        <div className="hub-section-heading"><div><span className="hub-eyebrow">TEAM ROSTER</span><h2>Player registrations</h2></div>
-          {!selected.draw
-            ? <button className="hub-draw-button" type="button" disabled={busy || approvedCount < 2} onClick={() => void run(() => api(`/categories/${selected.id}/draw`, { method: 'POST' }, token), 'Random draw published. Players can now see their pool and matches.')}><Shuffle size={17} /> Randomize & publish draw</button>
-            : !hasResults(selected) && <button className="hub-undo-button" type="button" disabled={busy} onClick={undoDraw}><Undo2 size={16} /> Undo draw</button>}
-        </div>
-        {!selected.draw && <p className="hub-helper">Only approved teams enter the draw.{selected.requirePayment ? ' Mark a team paid before approving it.' : ''} Once published, entries lock so players see a stable schedule; you can undo the draw until the first point is scored.</p>}
+        <div className="hub-overview-quick"><button type="button" onClick={() => setAdminSection('teams')}>Review registrations <ArrowRight size={16} /></button><button type="button" onClick={() => setAdminSection('draw')}>Open draw & scoring <ArrowRight size={16} /></button></div>
+        </div></div>}
+        {adminSection === 'teams' && <section className="hub-admin-section"><div className="hub-section-heading"><div><span className="hub-eyebrow">TEAM ROSTER</span><h2>Player registrations</h2></div><span className="hub-section-count">{approvedCount} approved / {entries.length} entries</span></div>
+        <p className="hub-helper">Review payments and approve teams here. Open Draw & scoring when at least two teams are approved.</p>
         <div className="hub-entry-filters" role="tablist" aria-label="Filter entries">{([['all', 'All', entries.length], ['pending', 'Need review', entries.filter((item) => item.status === 'pending').length], ['unpaid', 'Unpaid', unpaid.length], ['approved', 'Approved', approvedCount]] as const).map(([id, label, count]) => <button type="button" role="tab" aria-selected={entryFilter === id} className={entryFilter === id ? 'active' : ''} key={id} onClick={() => setEntryFilter(id)}>{label} <span>{count}</span></button>)}</div>
         <div className="hub-entry-list">{shownEntries.length ? shownEntries.map((entry) => {
           const needsPayment = selected.requirePayment && !entry.paid
@@ -352,8 +357,16 @@ export function OrganizerHub() {
             </div>}
             {editingEntry === entry.id && <EntryEditor entry={entry} busy={busy} onCancel={() => setEditingEntry('')} onSave={(patch) => patchEntry(entry, patch, `${entry.teamName} updated.`)} />}
           </article>
-        }) : <div className="hub-empty">{entries.length ? 'No entries match this filter.' : 'No player registrations yet. Share the category link to start collecting teams.'}</div>}</div>
+        }) : <div className="hub-empty">{entries.length ? 'No entries match this filter.' : 'No player registrations yet. Share the category link to start collecting teams.'}</div>}</div></section>}
+        {adminSection === 'draw' && <section className="hub-admin-section"><div className="hub-section-heading"><div><span className="hub-eyebrow">MATCH OPERATIONS</span><h2>Draw & scoring</h2></div>
+          {!selected.draw
+            ? <button className="hub-draw-button" type="button" disabled={busy || approvedCount < 2} onClick={() => void run(() => api(`/categories/${selected.id}/draw`, { method: 'POST' }, token), 'Random draw published. Players can now see their pool and matches.')}><Shuffle size={17} /> Randomize & publish draw</button>
+            : !hasResults(selected) && <button className="hub-undo-button" type="button" disabled={busy} onClick={undoDraw}><Undo2 size={16} /> Undo draw</button>}
+        </div>
+        {!selected.draw && <p className="hub-helper">Only approved teams enter the draw.{selected.requirePayment ? ' Mark a team paid before approving it.' : ''} Once published, entries lock so players see a stable schedule; you can undo the draw until the first point is scored.</p>}
+        {!selected.draw && <div className="hub-draw-empty"><Shuffle size={26} /><strong>{approvedCount < 2 ? 'Approve two teams to start the draw' : 'Ready for the random draw'}</strong><p>{approvedCount} approved teams. Published pool and court assignments will appear here.</p><button type="button" onClick={() => setAdminSection('teams')}>Review teams <ArrowRight size={15} /></button></div>}
         {selected.draw && <LiveDrawBoard category={selected} organizer publicBase={publicBase} onPublishPlayoff={() => void run(() => api(`/categories/${selected.id}/playoff`, { method: 'POST' }, token), 'Playoff bracket published. QR scoring now advances winners automatically.')} busy={busy} />}
+        </section>}
       </>}
     </>}
   </div>
