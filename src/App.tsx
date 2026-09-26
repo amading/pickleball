@@ -58,8 +58,9 @@ function App() {
   const params = new URLSearchParams(window.location.search)
   const scorePage = params.get('score')
   const stationPage = params.get('station')
+  const mobileDemo = params.has('mobile-demo')
   const registrationPage = params.get('register')
-  const standalone = Boolean(scorePage || stationPage || registrationPage)
+  const standalone = Boolean(scorePage || stationPage || registrationPage || mobileDemo)
 
   useEffect(() => {
     if (standalone) return
@@ -92,6 +93,7 @@ function App() {
 
   if (scorePage) return <LiveScoring scoreKey={scorePage} />
   if (stationPage) return <CourtStation stationKey={stationPage} />
+  if (mobileDemo) return <CourtStation stationKey="demo.sample" demo />
   if (registrationPage) return <RegistrationPortal categoryId={registrationPage} />
 
   const noCategories = <div className="live-category-empty">
@@ -156,6 +158,7 @@ function App() {
                   <button type="button" className="hero-cta" onClick={() => setActiveSection('live')}>Open live board <ArrowRight size={18} /></button>
                   <a className="hero-secondary" href="?register=all">Player registration <ArrowRight size={17} /></a>
                 </div>
+                <a className="mobile-demo-link" href="?mobile-demo=1">Preview mobile scoring design <ArrowRight size={16} /></a>
               </div>
               <div className="hero-art" aria-hidden="true"><div className="court-graphic"><span className="court-net" /><span className="court-ball" /></div><span className="hero-art-caption">PLAY THE MOMENT / OWN THE MATCH</span></div>
             </header>
