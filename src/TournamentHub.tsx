@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Copy, ImagePlus, LockKeyhole, Plus, RefreshCw, Shuffle, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Copy, ImagePlus, LockKeyhole, LogOut, Plus, RefreshCw, Shuffle, Sparkles, Trash2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import './tournamentHub.css'
 import LiveDrawBoard from './LiveDrawBoard'
@@ -24,8 +24,11 @@ const emptyPlayer = (): Player => ({ name: '', gender: 'other', photo: '' })
 const newCategory = { title: '', division: 'Newbie', format: 'doubles' as Category['format'], eligibility: 'genderless' as Category['eligibility'], fee: 700, capacity: 20, poolSize: 5, courts: 3, pointsToWin: 11, winBy: 2, winsToQualify: 3, rules: 'Round robin within each pool. Each team plays every other team in its pool once.' }
 
 async function api<T>(path: string, options: RequestInit = {}, pin = ''): Promise<T> {
-  const response = await fetch(`/api${path}`, { ...options, headers: { 'Content-Type': 'application/json', ...(pin ? { 'x-admin-pin': pin } : {}), ...options.headers } })
-  const data = await response.json()
+  let response: Response
+  try { response = await fetch(`/api${path}`, { ...options, cache: 'no-store', headers: { 'Content-Type': 'application/json', ...(pin ? { 'x-admin-pin': pin } : {}), ...options.headers } }) }
+  catch { throw new Error('Cannot reach the tournament server. Check the Wi-Fi connection and try again.') }
+  const data = await response.json().catch(() => null)
+  if (!data) throw new Error('The tournament server is not responding. Make sure it is running, then try again.')
   if (!response.ok) throw new Error(data.error || 'Request failed.')
   return data as T
 }
@@ -56,7 +59,7 @@ export function OrganizerHub() {
     try {
       const items = await api<Category[]>('/admin/categories', {}, currentPin)
       setCategories(items)
-      setSelectedId((old) => old || items[0]?.id || '')
+      setSelectedId((old) => items.some((item) => item.id === old) ? old : items[0]?.id || '')
       setAuthenticated(true)
       setError('')
     } catch (problem) {
@@ -81,7 +84,25 @@ export function OrganizerHub() {
       await api('/admin/login', { method: 'POST' }, pin)
       window.sessionStorage.setItem('rally-admin-pin', pin)
       await refresh(pin)
+    } catch (problem) { window.sessionStorage.removeItem('rally-admin-pin'); setError((problem as Error).message) }
+  }
+
+  function logout() {
+    window.sessionStorage.removeItem('rally-admin-pin')
+    setPin(''); setAuthenticated(false); setCategories([]); setNotice(''); setError('')
+  }
+
+  async function deleteCategory() {
+    if (!selected) return
+    const played = selected.draw ? ' Its draw, scores, and bracket will be erased too.' : ''
+    if (!window.confirm(`Delete "${selected.title}" and all ${selected.registrations?.length ?? 0} registrations?${played} This cannot be undone.`)) return
+    setBusy(true); setError('')
+    try {
+      await api(`/categories/${selected.id}`, { method: 'DELETE' }, pin)
+      setSelectedId(''); setNotice(`${selected.title} was deleted.`)
+      await refresh()
     } catch (problem) { setError((problem as Error).message) }
+    finally { setBusy(false) }
   }
 
   async function createCategory(event: React.FormEvent) {
@@ -141,7 +162,7 @@ export function OrganizerHub() {
   if (!authenticated) return <section className="hub-admin-login"><span className="hub-login-icon"><LockKeyhole size={27} /></span><span className="hub-eyebrow">ORGANIZER ACCESS</span><h2>Run your tournament.</h2><p>Enter the organizer PIN to create categories, review registrations, and publish draws.</p><form onSubmit={login}><input type="password" inputMode="numeric" aria-label="Organizer PIN" placeholder="Organizer PIN" value={pin} onChange={(event) => setPin(event.target.value)} required /><button type="submit">Open organizer desk <ArrowRight size={17} /></button></form>{error && <p className="hub-error">{error}</p>}</section>
 
   return <div className="hub-admin">
-    <div className="hub-admin-hero"><div><span className="hub-eyebrow">ORGANIZER DESK / LIVE OPERATIONS</span><h1>Build the draw.<br /><em>Bring players in.</em></h1><p>Post a category, approve teams, then publish the random pool draw. Every player sees the same assignments through the registration link.</p></div><button type="button" onClick={() => { setShowCreate(true); setError('') }}><Plus size={18} /> New category</button></div>
+    <div className="hub-admin-hero"><div><span className="hub-eyebrow">ORGANIZER DESK / LIVE OPERATIONS</span><h1>Build the draw.<br /><em>Bring players in.</em></h1><p>Post a category, approve teams, then publish the random pool draw. Every player sees the same assignments through the registration link.</p></div><div className="hub-hero-actions"><button type="button" onClick={() => { setShowCreate(true); setError('') }}><Plus size={18} /> New category</button><button type="button" className="hub-logout" onClick={logout}><LogOut size={16} /> Sign out</button></div></div>
     {notice && <div className="hub-notice"><CheckCircle2 size={18} /> {notice}<button type="button" aria-label="Dismiss" onClick={() => setNotice('')}><X size={16} /></button></div>}
     {error && <div className="hub-error">{error}</div>}
     {showCreate && <section className="hub-create"><div className="hub-section-heading"><div><span className="hub-eyebrow">PUBLISH REGISTRATION</span><h2>Create a category</h2></div><button type="button" className="hub-icon-button" aria-label="Close" onClick={() => setShowCreate(false)}><X size={19} /></button></div><form onSubmit={createCategory}>
@@ -157,7 +178,7 @@ export function OrganizerHub() {
     </form></section>}
     <div className="hub-section-heading hub-category-heading"><div><span className="hub-eyebrow">YOUR CATEGORIES</span><h2>Registration board</h2></div><button className="hub-refresh" type="button" onClick={() => void refresh()}><RefreshCw size={15} /> Refresh</button></div>
     {categories.length === 0 ? <div className="hub-empty">No categories yet. Create one to open registration.</div> : <><div className="hub-category-tabs">{categories.map((category) => <button type="button" className={category.id === selected?.id ? 'active' : ''} key={category.id} onClick={() => setSelectedId(category.id)}>{category.title}<small>{category.registrations?.length ?? 0} entries</small></button>)}</div>{selected && <>
-      <div className="hub-category-summary"><div><span className="hub-eyebrow">{selected.division.toUpperCase()} · {labelFormat(selected.format).toUpperCase()}</span><h2>{selected.title}</h2><p>{labelEligibility(selected.eligibility)} · ₱{selected.fee.toLocaleString()} / player · {selected.capacity} team slots · {selected.poolSize} teams/pool · {selected.courts} courts · First to {selected.pointsToWin}, win by {selected.winBy}</p><small className="hub-share-address">Phone link: {registrationUrl(selected.id, publicBase)}</small></div><div className="hub-summary-actions"><button type="button" onClick={() => void copyLink(selected.id)}><Copy size={16} /> Copy registration link</button><a href={registrationUrl(selected.id)} target="_blank" rel="noreferrer">Preview player page <ArrowRight size={16} /></a></div></div>
+      <div className="hub-category-summary"><div><span className="hub-eyebrow">{selected.division.toUpperCase()} · {labelFormat(selected.format).toUpperCase()}</span><h2>{selected.title}</h2><p>{labelEligibility(selected.eligibility)} · ₱{selected.fee.toLocaleString()} / player · {selected.capacity} team slots · {selected.poolSize} teams/pool · {selected.courts} courts · First to {selected.pointsToWin}, win by {selected.winBy}</p><small className="hub-share-address">Phone link: {registrationUrl(selected.id, publicBase)}</small></div><div className="hub-summary-actions"><button type="button" onClick={() => void copyLink(selected.id)}><Copy size={16} /> Copy registration link</button><a href={registrationUrl(selected.id)} target="_blank" rel="noreferrer">Preview player page <ArrowRight size={16} /></a><button type="button" className="hub-delete" disabled={busy} onClick={() => void deleteCategory()}><Trash2 size={16} /> Delete</button></div></div>
       <div className="hub-admin-stats"><div><strong>{selected.registrations?.length ?? 0}</strong><span>Total entries</span></div><div><strong>{selected.registrations?.filter((item) => item.status === 'pending').length ?? 0}</strong><span>Need review</span></div><div><strong>{selected.registrations?.filter((item) => item.status === 'approved').length ?? 0}</strong><span>Approved teams</span></div><div><strong>{selected.draw ? selected.draw.pools.length : '—'}</strong><span>Published pools</span></div></div>
       <div className="hub-qualification-control"><div><span className="hub-eyebrow">PLAYOFF RULE</span><strong>Minimum wins to qualify</strong><small>{selected.winsToQualify} / {selected.poolSize - 1} possible pool wins. Each team plays {selected.poolSize - 1} pool games.</small></div><div><button type="button" aria-label="Decrease required wins" disabled={selected.winsToQualify <= 1 || Boolean(selected.playoff)} onClick={() => void setQualifyingWins(selected.winsToQualify - 1)}>−</button><b>{selected.winsToQualify}</b><span className="hub-qualify-max">/ {selected.poolSize - 1}</span><button type="button" aria-label="Increase required wins" disabled={selected.winsToQualify >= selected.poolSize - 1 || Boolean(selected.playoff)} onClick={() => void setQualifyingWins(selected.winsToQualify + 1)}>+</button></div></div>
       <div className="hub-section-heading"><div><span className="hub-eyebrow">TEAM ROSTER</span><h2>Player registrations</h2></div>{!selected.draw && <button className="hub-draw-button" type="button" disabled={busy || (selected.registrations?.filter((item) => item.status === 'approved').length ?? 0) < 2} onClick={() => void publishDraw()}><Shuffle size={17} /> Randomize & publish draw</button>}</div>
@@ -236,11 +257,11 @@ export function RegistrationPortal({ categoryId }: { categoryId: string }) {
 
   const ownPool = category?.draw?.pools.find((pool) => pool.teams.some((team) => team.id === entry?.id))
   const registeredCount = category?.approvedCount ?? 0
-  return <main className="hub-public"><div className="hub-public-inner"><header className="hub-public-top"><a href="?register=all"><span className="hub-logo-ball">✦</span> RALLY<span> / </span>HQ</a><span>PLAYER REGISTRATION</span></header>
+  return <main className="hub-public"><div className="hub-public-inner"><header className="hub-public-top"><a href="?register=all"><img className="hub-brand-logo" src="/pbb-logo.webp" alt="PBB Pickleball" width="600" height="400" /></a><span>PLAYER REGISTRATION</span></header>
     {loading ? <div className="hub-empty">Loading tournament...</div> : categoryId === 'all' ? <><div className="hub-public-hero"><span className="hub-eyebrow">CHOOSE YOUR GAME</span><h1>Find your<br /><em>category.</em></h1><p>Register your team from your phone. Watch this page for your pool and match assignment after the live draw.</p></div><div className="hub-public-grid">{categories.map((item) => <a className="hub-public-category" href={registrationUrl(item.id)} key={item.id}><span>{item.division.toUpperCase()} / {labelFormat(item.format).toUpperCase()}</span><strong>{item.title}</strong><small>{labelEligibility(item.eligibility)} · ₱{item.fee.toLocaleString()} / player</small><div><b>{item.approvedCount} / {item.capacity} approved</b><ArrowRight size={20} /></div></a>)}</div>{categories.length === 0 && <div className="hub-empty">No categories have been posted yet.</div>}</> : category ? <><a className="hub-back" href="?register=all"><ArrowLeft size={16} /> All categories</a><div className="hub-category-hero"><div><span className="hub-eyebrow">{category.division.toUpperCase()} · {labelFormat(category.format).toUpperCase()}</span><h1>{category.title}<em>.</em></h1><p>{category.rules}</p><div className="hub-hero-chips"><span>{labelEligibility(category.eligibility)}</span><span>₱{category.fee.toLocaleString()} / player</span><span>First to {category.pointsToWin}, win by {category.winBy}</span><span>{category.winsToQualify}+ wins to bracket</span><span>{registeredCount} / {category.capacity} approved</span></div></div><div className="hub-hero-orbit"><div><Sparkles size={28} /><strong>PLAY<br />YOUR<br />WAY.</strong></div></div></div>
       {entry ? <section className="hub-entry-status"><div className="hub-section-heading"><div><span className="hub-eyebrow">YOUR TEAM STATUS</span><h2>{entry.teamName}</h2></div><span className={`hub-status ${entry.status}`}>{entry.status}</span></div>{entry.status === 'pending' && <p>Your registration is in. The organizer will review it before the draw.</p>}{entry.status === 'rejected' && <p>This entry was not approved. Contact the organizer for details.</p>}{entry.status === 'approved' && !ownPool && <p>Approved! Check back here for the live random draw.</p>}{ownPool && <div className="hub-your-assignment"><span>YOUR ASSIGNMENT</span><strong>{ownPool.name}</strong><b>{ownPool.court} · {entry.matches.length} pool games</b><p>Your matchups are highlighted in the draw below.</p></div>}<small>Save this page link to check your status and next match later.</small></section> : !category.draw ? <section className="hub-register"><div className="hub-section-heading"><div><span className="hub-eyebrow">JOIN THE LINEUP</span><h2>Register your team</h2></div><span className="hub-open-pill">REGISTRATION OPEN</span></div><p>One form per team. Add each player's name and photo; the organizer will approve the entry.</p><form onSubmit={register}><label className="hub-wide-label">Team name<input maxLength={70} placeholder="What should we call your team?" value={teamName} onChange={(event) => setTeamName(event.target.value)} required /></label><div className="hub-player-grid">{players.map((player, index) => <div className="hub-player-form" key={index}><span className="hub-eyebrow">PLAYER {index + 1}{index === 1 ? ' / PARTNER' : ''}</span><label className="hub-photo-picker">{player.photo ? <img src={player.photo} alt={`Player ${index + 1} preview`} /> : <ImagePlus size={28} />}<span>{player.photo ? 'Change photo' : 'Add player photo'}</span><input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void upload(index, event.target.files?.[0])} /></label><label>Full name<input maxLength={70} placeholder="First and last name" value={player.name} onChange={(event) => setPlayers((current) => current.map((item, i) => i === index ? { ...item, name: event.target.value } : item))} required /></label><label>Gender<select value={player.gender} onChange={(event) => setPlayers((current) => current.map((item, i) => i === index ? { ...item, gender: event.target.value as Player['gender'] } : item))}><option value="other">Prefer not to say / other</option><option value="man">Man</option><option value="woman">Woman</option></select></label></div>)}</div>{category.format === 'mixed-doubles' && <p className="hub-helper">Mixed doubles: one man and one woman per team.</p>}{error && <div className="hub-error">{error}</div>}<button className="hub-submit" type="submit" disabled={busy}>Submit registration <ArrowRight size={19} /></button><small>By submitting, you agree to display your team names and photos in the published draw.</small></form></section> : <div className="hub-closed"><CheckCircle2 size={20} /> Registration is closed. The draw is live below.</div>}
       {category.draw && <LiveDrawBoard category={category} ownId={entry?.id} publicBase={window.location.origin} />}
     </> : <div className="hub-error">{error || 'Category not found.'}</div>}
-    <footer className="hub-public-footer">RALLY / HQ <span>BUILT FOR THE NEXT GAME</span></footer>
+    <footer className="hub-public-footer">PBB PICKLEBALL <span>BUILT FOR THE NEXT GAME</span></footer>
   </div></main>
 }

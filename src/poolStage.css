@@ -59,3 +59,4 @@
 @media(max-width:1000px) { .pool-stage-content { grid-template-columns:1fr; }.pool-standings { width:100%; }.pool-stage-facts { grid-template-columns:repeat(3,1fr); }.pool-stage-facts p { grid-column:1 / -1; min-height:40px; } }
 @media(max-width:680px) { .pool-stage-header,.pool-stage-controls { flex-direction:column; align-items:stretch; }.pool-stage-format { width:max-content; }.pool-team-search { width:100%; }.pool-stage-facts > div { padding:10px; }.pool-stage-facts strong { font-size:21px; }.pool-stage-facts span { font-size:9px; }.pool-match-list { grid-template-columns:1fr; }.pool-stage-content { padding:18px; }.pool-stage-next { margin:0 18px 18px; }.pool-stage-header { padding:20px; } }
 @media(max-width:680px) { .bracket-view-switcher { align-items:stretch; flex-direction:column; }.bracket-view-tabs { flex-wrap:wrap; }.bracket-view-tabs button { flex:1; } }
+.pool-match-teams button:disabled { cursor:default; opacity:1; }

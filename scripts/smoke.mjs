@@ -1,6 +1,8 @@
 const base = process.env.SMOKE_URL || 'http://127.0.0.1:8791/api'
 const pin = process.env.SMOKE_PIN || 'test-pin-6742'
-const photo = `data:image/png;base64,${Buffer.from('test').toString('base64')}`
+// 1x1 transparent PNG: the server checks real image bytes, not just the data URL prefix.
+const photo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+const fakePhoto = `data:image/png;base64,${Buffer.from('not really a png').toString('base64')}`
 
 async function request(path, method = 'GET', value, admin = false, extraHeaders = {}) {
   const response = await fetch(base + path, {
@@ -60,6 +62,10 @@ const category = await request('/categories', 'POST', {
   rules: 'Round robin.',
 }, true)
 
+await expectFail(`/categories/${category.id}/register`, 'POST', {
+  teamName: 'Fake Photo', players: [{ name: 'A', gender: 'man', photo: fakePhoto }, { name: 'B', gender: 'woman', photo: fakePhoto }],
+}, 'not a valid')
+
 const entries = []
 for (let index = 1; index <= 5; index += 1) {
   const team = await request(`/categories/${category.id}/register`, 'POST', {
@@ -87,6 +93,9 @@ let adminCategories = await request('/admin/categories', 'GET', undefined, true)
 let adminCategory = adminCategories.find((item) => item.id === category.id)
 if (!adminCategory.draw.matches.every((match) => match.scoreToken)) throw new Error('Organizer view is missing score tokens.')
 
+const firstMatch = adminCategory.draw.matches[0]
+await expectFail(`/categories/${category.id}/matches/${firstMatch.id}/score`, 'PATCH', { score1: 5, score2: 1, status: 'final', version: firstMatch.version }, 'valid final', { 'x-score-token': firstMatch.scoreToken })
+
 for (const [index, match] of adminCategory.draw.matches.entries()) {
   await scoreFinal(category.id, match, index % 3 === 0 ? 2 : 1)
 }
@@ -112,4 +121,7 @@ adminCategory = adminCategories.find((item) => item.id === category.id)
 const finalMatch = adminCategory.playoff.rounds.at(-1).matches[0]
 if (!finalMatch.team1 && !finalMatch.team2) throw new Error('Playoff advancement did not fill later bracket slots.')
 
-console.log('Smoke passed: registration, secure draw, QR scoring, standings, qualifiers, and playoff advancement.')
+await request(`/categories/${category.id}`, 'DELETE', undefined, true)
+await expectFail(`/categories/${category.id}`, 'GET', undefined, 'not found')
+
+console.log('Smoke passed: registration, secure draw, QR scoring, standings, qualifiers, playoff advancement, score validation, photo checks, and delete.')

@@ -1,16 +1,26 @@
 import http from 'node:http'
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { homedir } from 'node:os'
-import { networkInterfaces } from 'node:os'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
+import { homedir, networkInterfaces } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 const dataFile = process.env.DATA_FILE || join(homedir(), '.rally-hq', 'data.json')
 const port = Number(process.env.API_PORT || 8787)
 const adminPin = process.env.ADMIN_PIN || String(randomInt(100000, 1000000))
 const lanAddress = Object.values(networkInterfaces()).flat().find((item) => item && item.family === 'IPv4' && !item.internal)?.address
-const publicBaseUrl = process.env.PUBLIC_BASE_URL || `http://${lanAddress || '127.0.0.1'}:5173`
+// In dev (scripts/dev.mjs) phones reach Vite on 5173; with `npm start` this server also serves the built site.
+const distDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'dist')
+const servesSite = !process.env.RALLY_DEV
+const publicBaseUrl = process.env.PUBLIC_BASE_URL || `http://${lanAddress || '127.0.0.1'}:${servesSite ? port : 5173}`
 const allowedImages = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/
+const imageSignatures = {
+  jpeg: (bytes) => bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff,
+  png: (bytes) => bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  webp: (bytes) => bytes.subarray(0, 4).toString('latin1') === 'RIFF' && bytes.subarray(8, 12).toString('latin1') === 'WEBP',
+}
+const staticTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.json': 'application/json' }
+const failedLogins = new Map()
 let database = { categories: [] }
 let saving = Promise.resolve()
 
@@ -25,7 +35,9 @@ function save() {
   const snapshot = JSON.stringify(database, null, 2)
   saving = saving.then(async () => {
     await mkdir(dirname(dataFile), { recursive: true })
-    await writeFile(dataFile, snapshot)
+    const temporary = `${dataFile}.tmp`
+    await writeFile(temporary, snapshot)
+    await rename(temporary, dataFile)
   })
   return saving
 }
@@ -56,16 +68,47 @@ function requiredText(value, label, max = 100) {
 }
 
 function image(value) {
-  if (typeof value !== 'string' || value.length > 1_400_000 || !allowedImages.test(value)) throw new Error('Upload a JPG, PNG, or WebP photo under 1 MB.')
+  const match = typeof value === 'string' && value.length <= 1_400_000 ? allowedImages.exec(value) : null
+  if (!match) throw new Error('Upload a JPG, PNG, or WebP photo under 1 MB.')
+  const bytes = Buffer.from(value.slice(value.indexOf(',') + 1), 'base64')
+  if (bytes.length < 12 || !imageSignatures[match[1]](bytes)) throw new Error('That file is not a valid JPG, PNG, or WebP photo.')
   return value
 }
 
-function authorized(req) {
-  const supplied = req.headers['x-admin-pin']
-  if (typeof supplied !== 'string') return false
+function sameSecret(supplied, expected) {
+  if (typeof supplied !== 'string' || typeof expected !== 'string') return false
   const a = Buffer.from(supplied)
-  const b = Buffer.from(adminPin)
+  const b = Buffer.from(expected)
   return a.length === b.length && timingSafeEqual(a, b)
+}
+
+function clientKey(req) {
+  return req.socket.remoteAddress || 'unknown'
+}
+
+function loginLocked(req) {
+  return (failedLogins.get(clientKey(req))?.until ?? 0) > Date.now()
+}
+
+function authorized(req) {
+  if (typeof req.headers['x-admin-pin'] !== 'string' || loginLocked(req)) return false
+  const key = clientKey(req)
+  if (sameSecret(req.headers['x-admin-pin'], adminPin)) { failedLogins.delete(key); return true }
+  // Five wrong PINs lock this address out, doubling from two minutes on each further miss.
+  const count = (failedLogins.get(key)?.count ?? 0) + 1
+  failedLogins.set(key, { count, until: count >= 5 ? Date.now() + 120_000 * 2 ** Math.min(count - 5, 5) : 0 })
+  return false
+}
+
+function validFinal(first, second, pointsToWin, winBy) {
+  const high = Math.max(first, second)
+  const margin = Math.abs(first - second)
+  // Past the target a game only continues until someone leads by exactly winBy (e.g. 13-11, never 15-2).
+  return high >= pointsToWin && margin >= winBy && (high === pointsToWin || margin === winBy)
+}
+
+function activeEntries(category) {
+  return category.registrations.filter((item) => item.status !== 'rejected').length
 }
 
 function publicMatch(match) {
@@ -201,6 +244,10 @@ function createPlayoff(category) {
   return { rounds, publishedAt: new Date().toISOString() }
 }
 
+function dependentMatch(rounds, match) {
+  return rounds.flatMap((round) => round.matches).find((item) => item.source1 === match.id || item.source2 === match.id)
+}
+
 function advancePlayoff(rounds) {
   const byId = new Map(rounds.flatMap((round) => round.matches.map((match) => [match.id, match])))
   for (const round of rounds.slice(1)) {
@@ -233,16 +280,35 @@ for (const category of database.categories) {
 }
 if (migrated) await save()
 
+async function serveSite(req, res, pathname) {
+  if (!servesSite || !['GET', 'HEAD'].includes(req.method)) return send(res, 404, { error: 'Not found' })
+  let decoded
+  try { decoded = decodeURIComponent(pathname) } catch { return send(res, 400, { error: 'Bad address.' }) }
+  let file = resolve(distDir, '.' + normalize(decoded))
+  if (file !== distDir && !file.startsWith(distDir + sep)) return send(res, 404, { error: 'Not found' })
+  try { if (!(await stat(file)).isFile()) throw new Error('Not a file') } catch { file = join(distDir, 'index.html') }
+  try {
+    const content = await readFile(file)
+    const hashed = file.includes(`${sep}assets${sep}`)
+    res.writeHead(200, { 'Content-Type': staticTypes[extname(file)] || 'application/octet-stream', 'Cache-Control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache' })
+    res.end(req.method === 'HEAD' ? undefined : content)
+  } catch {
+    res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' })
+    res.end('Site not built yet. Run "npm run build" first, or use "npm run dev".')
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost')
     const parts = url.pathname.split('/').filter(Boolean)
-    if (parts[0] !== 'api') return send(res, 404, { error: 'Not found' })
+    if (parts[0] !== 'api') return await serveSite(req, res, url.pathname)
 
     if (req.method === 'GET' && url.pathname === '/api/config') return send(res, 200, { publicBaseUrl })
 
     if (req.method === 'POST' && url.pathname === '/api/admin/login') {
-      return send(res, authorized(req) ? 200 : 401, authorized(req) ? { ok: true } : { error: 'Incorrect organizer PIN.' })
+      if (authorized(req)) return send(res, 200, { ok: true })
+      return send(res, loginLocked(req) ? 429 : 401, { error: loginLocked(req) ? 'Too many wrong PINs. Wait a few minutes and try again.' : 'Incorrect organizer PIN.' })
     }
     if (req.method === 'GET' && url.pathname === '/api/categories') {
       return send(res, 200, database.categories.filter((item) => item.published).map(publicCategory))
@@ -281,6 +347,12 @@ const server = http.createServer(async (req, res) => {
         if (!category.published) return send(res, 404, { error: 'Category not found.' })
         return send(res, 200, publicCategory(category))
       }
+      if (req.method === 'DELETE' && parts.length === 3) {
+        if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
+        database.categories = database.categories.filter((item) => item.id !== category.id)
+        await save()
+        return send(res, 200, { ok: true })
+      }
       if (req.method === 'PATCH' && parts[3] === 'qualification') {
         if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
         if (category.playoff) throw new Error('Qualification is locked after the playoff bracket is published.')
@@ -303,7 +375,7 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'PATCH' && parts[5] === 'score') {
           const admin = authorized(req)
           const token = req.headers['x-score-token']
-          if (!admin && (!match.scoreToken || token !== match.scoreToken)) return send(res, 403, { error: 'Scan the organizer QR code to score this match.' })
+          if (!admin && !sameSecret(token, match.scoreToken)) return send(res, 403, { error: 'Scan the organizer QR code to score this match.' })
           if (match.status === 'bye') throw new Error('A bye advances automatically.')
           if (match.status === 'final' && !admin) throw new Error('Final score is locked. Ask the organizer to correct it.')
           if (match.stage === 'pool' && category.playoff) throw new Error('Pool scores are locked after the playoff bracket is published.')
@@ -314,7 +386,11 @@ const server = http.createServer(async (req, res) => {
           if (Number(input.version) !== (match.version ?? 0)) return send(res, 409, { error: 'Score changed on another device. Refresh and try again.' })
           if (!Number.isInteger(first) || !Number.isInteger(second) || first < 0 || second < 0 || first > 999 || second > 999) throw new Error('Scores must be whole numbers from 0 to 999.')
           if (!['live', 'final'].includes(input.status)) throw new Error('Choose live or final score status.')
-          if (input.status === 'final' && (Math.max(first, second) < (category.pointsToWin ?? 11) || Math.abs(first - second) < (category.winBy ?? 2))) throw new Error(`Final score must reach ${category.pointsToWin ?? 11} points and win by ${category.winBy ?? 2}.`)
+          if (input.status === 'final' && !validFinal(first, second, category.pointsToWin ?? 11, category.winBy ?? 2)) throw new Error(`Not a valid final: first to ${category.pointsToWin ?? 11}, win by ${category.winBy ?? 2} (past ${category.pointsToWin ?? 11} the lead must be exactly ${category.winBy ?? 2}).`)
+          if (input.status !== 'final' && match.status === 'final' && match.stage === 'playoff') {
+            const next = dependentMatch(category.playoff.rounds, match)
+            if (next && ['live', 'final'].includes(next.status)) throw new Error('The next playoff match already started with this winner. Reopen that match first.')
+          }
           match.score1 = first; match.score2 = second; match.status = input.status
           match.winner = input.status === 'final' ? first > second ? match.team1 : match.team2 : null
           match.version = (match.version ?? 0) + 1
@@ -325,8 +401,11 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'POST' && parts[3] === 'register') {
         if (!category.published || category.draw) throw new Error('Registration is closed for this category.')
-        if (category.registrations.filter((item) => item.status !== 'rejected').length >= category.capacity) throw new Error('This category is full.')
+        if (activeEntries(category) >= category.capacity) throw new Error('This category is full.')
         const input = await body(req)
+        // Re-check after the upload finishes; other entries or the draw may have landed meanwhile.
+        if (category.draw) throw new Error('Registration is closed for this category.')
+        if (activeEntries(category) >= category.capacity) throw new Error('This category is full.')
         const players = Array.isArray(input.players) ? input.players : []
         const expected = category.format === 'singles' ? 1 : 2
         if (players.length !== expected) throw new Error(`This category needs ${expected} player${expected === 1 ? '' : 's'}.`)
@@ -357,6 +436,7 @@ const server = http.createServer(async (req, res) => {
         if (!registration) return send(res, 404, { error: 'Registration not found.' })
         const input = await body(req)
         if (!['approved', 'rejected', 'pending'].includes(input.status)) throw new Error('Invalid registration status.')
+        if (registration.status === 'rejected' && input.status !== 'rejected' && activeEntries(category) >= category.capacity) throw new Error('All team slots are taken. Reject another entry first.')
         registration.status = input.status
         await save()
         return send(res, 200, registration)
@@ -385,5 +465,6 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, '0.0.0.0', () => {
   console.log(`Rally HQ API listening on http://127.0.0.1:${port}`)
   console.log(`Player registration links use ${publicBaseUrl}`)
+  if (servesSite) console.log(`Serving the built site from ${distDir}`)
   if (!process.env.ADMIN_PIN) console.log(`Organizer PIN for this run: ${adminPin} (set ADMIN_PIN for a stable PIN)`)
 })

@@ -45,8 +45,8 @@ h1 { margin-top:21px; color:#fff; font-size:clamp(40px,4.7vw,72px); line-height:
 h1 em { color:var(--lime); font-style:normal; }
 .hero-copy p { max-width:500px; margin-top:17px; color:#c6d8c7; font-size:14px; line-height:1.6; }
 .hero-links { display:flex; flex-wrap:wrap; gap:9px; margin-top:25px; }
-.hero-links button { display:inline-flex; align-items:center; justify-content:center; gap:15px; min-height:42px; padding:0 17px; border-radius:8px; cursor:pointer; font-size:12px; font-weight:800; transition:transform .2s; }
-.hero-links button:hover { transform:translateY(-3px); }
+.hero-links button,.hero-links a { display:inline-flex; align-items:center; justify-content:center; gap:15px; min-height:42px; padding:0 17px; border-radius:8px; cursor:pointer; font-size:12px; font-weight:800; transition:transform .2s; }
+.hero-links button:hover,.hero-links a:hover { transform:translateY(-3px); }
 .hero-cta { color:#1f361d; border:1px solid var(--lime); background:var(--lime); box-shadow:0 9px 25px #d8ff5b26; }
 .hero-secondary { color:#fff; border:1px solid #ffffff5a; background:#ffffff0d; }
 .hero-art { position:relative; z-index:1; display:grid; place-items:center; overflow:hidden; }

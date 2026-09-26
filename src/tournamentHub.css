@@ -38,3 +38,8 @@
 .hub-scoring-options label small{color:#789177;font-size:10px;font-weight:800}
 
 @media(max-width:620px){.hub-qualification-control{align-items:flex-start;flex-direction:column}.hub-qualification-control>div:last-child{width:100%;justify-content:space-between}.hub-scoring-options{grid-template-columns:1fr}}
+.hub-hero-actions{z-index:1;display:flex;flex-wrap:wrap;gap:8px;flex:none}.hub-hero-actions>button{display:flex;align-items:center;gap:8px;padding:15px 20px;border:0;border-radius:10px;background:var(--hub-green);color:#1c351e;font-weight:900;cursor:pointer}.hub-hero-actions>button.hub-logout{border:1px solid #ffffff4a;background:#ffffff10;color:#fff}
+.hub-summary-actions button.hub-delete{border-color:#f0c7c0;background:#fff4f2;color:#a3372a;cursor:pointer}.hub-summary-actions button.hub-delete:disabled{opacity:.6;cursor:wait}
+@media(max-width:620px){.hub-hero-actions{width:100%}.hub-hero-actions>button{flex:1;justify-content:center}}
+.hub-public-top>a{display:flex;align-items:center}.hub-brand-logo{display:block;width:auto;height:56px;border-radius:10px;box-shadow:0 6px 18px #0000002e}
+@media(max-width:620px){.hub-brand-logo{height:46px}}

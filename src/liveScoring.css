@@ -395,3 +395,4 @@
 @media (prefers-reduced-motion: reduce) {
   .score-status i { animation: none; }
 }
+.score-top .score-brand-logo { display:block; width:auto; height:40px; border-radius:8px; }

@@ -1,0 +1,56 @@
+.metric-card .metric-of { margin-left:2px; color:#9aa697; font-size:.5em; letter-spacing:-.02em; }
+.live-overview-empty { margin-top:16px; padding:24px; border:1px dashed #c7dabc; border-radius:14px; background:#f6fbf1; color:#536b52; }
+.live-overview-empty strong { display:block; color:#1e3d29; font-family:'Space Grotesk',sans-serif; font-size:22px; letter-spacing:-.04em; }
+.live-overview-empty p { max-width:580px; margin:8px 0 16px; font-size:13px; line-height:1.5; }
+.live-overview-empty button { display:inline-flex; align-items:center; gap:7px; padding:10px 12px; border:0; border-radius:8px; background:#c9f46b; color:#1d3a24; cursor:pointer; font-size:12px; font-weight:900; }
+.live-overview-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin-top:16px; }
+.live-overview-card { min-width:0; padding:18px; border:1px solid #e3e9df; border-radius:14px; background:#fff; box-shadow:0 7px 16px #26351e08; }
+.live-overview-card h3 { display:flex; align-items:center; gap:8px; margin:0 0 12px; color:var(--ink,#18251b); font-family:'Space Grotesk',sans-serif; font-size:17px; letter-spacing:-.03em; }
+.live-overview-card.champions { border-color:#cfe7a3; background:linear-gradient(135deg,#fbfff0,#fff); }
+.live-overview-row { display:flex; flex-direction:column; gap:4px; width:100%; margin-top:8px; padding:11px 12px; border:1px solid #edf1e9; border-radius:10px; background:#f8faf4; color:inherit; text-align:left; cursor:pointer; font:inherit; }
+.live-overview-row:hover { border-color:#c9dcbc; background:#f2f8ea; }
+.live-overview-row small { overflow:hidden; color:#788579; font-size:10px; font-weight:800; letter-spacing:.04em; text-overflow:ellipsis; text-transform:uppercase; white-space:nowrap; }
+.live-overview-row strong { color:#18251b; font-size:13px; line-height:1.35; overflow-wrap:anywhere; }
+.live-overview-row em { margin:0 4px; color:#4c8a3b; font-style:normal; font-weight:900; }
+.live-overview-note { margin:0; color:#788579; font-size:12px; line-height:1.5; }
+
+.live-schedule { padding:0 25px 25px; }
+.live-schedule-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:6px 0 14px; }
+.live-schedule-head .court-tabs { display:flex; flex-wrap:wrap; }
+.live-schedule-progress { color:#788579; font-size:11px; font-weight:800; }
+.live-schedule-list { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+.live-schedule-row { display:grid; grid-template-columns:34px minmax(0,1fr) auto; align-items:center; gap:12px; padding:10px 12px; border:1px solid #edf0e9; border-radius:10px; background:#fff; }
+.live-schedule-row.live { border-color:#9fd67e; background:#f3fbec; }
+.live-schedule-row.next { border-color:#d8ff5b; box-shadow:0 0 0 2px #d8ff5b55; }
+.live-schedule-row.final,.live-schedule-row.bye { background:#fafbf8; }
+.live-schedule-teams { display:grid; gap:3px; min-width:0; }
+.live-schedule-teams small { color:#859184; font-size:9px; font-weight:900; letter-spacing:.06em; text-transform:uppercase; }
+.live-schedule-teams span { display:flex; justify-content:space-between; gap:10px; color:#3b4a3e; font-size:12px; font-weight:700; overflow-wrap:anywhere; }
+.live-schedule-teams span.won { color:#18251b; font-weight:900; }
+.live-schedule-teams b { flex:none; min-width:22px; color:#18251b; font-family:'Space Grotesk',sans-serif; text-align:right; }
+.live-schedule-status { padding:6px 8px; border-radius:6px; background:#f1f4ef; color:#889589; font-size:10px; font-weight:900; white-space:nowrap; }
+.live-schedule-status.live { background:#e8f6e0; color:#357345; }
+.live-schedule-status.up-next { background:#d8ff5b; color:#1d3a24; }
+.live-schedule-status.final { background:#1e3f2a; color:#fff; }
+
+.reference-banner { display:flex; align-items:flex-start; gap:10px; margin-bottom:14px; padding:13px 15px; border:1px solid #f1d9a0; border-radius:12px; background:#fff9ea; color:#6b5421; font-size:12px; line-height:1.5; }
+.reference-banner svg { flex:none; margin-top:2px; }
+.reference-banner strong { color:#4d3a10; }
+
+@media(max-width:620px) {
+  .live-schedule { padding:0 16px 18px; }
+  .live-schedule-head { align-items:stretch; flex-direction:column; }
+  .live-schedule-row { grid-template-columns:28px minmax(0,1fr); }
+  .live-schedule-status { grid-column:2; justify-self:start; }
+}
+
+button.sidebar-card { width:100%; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+button.sidebar-card:hover { border-color:#6f9a72; }
+a.hero-secondary { text-decoration:none; }
+/* Let the single mobile column shrink to the screen; the nav row scrolls sideways instead of widening the page. */
+@media(max-width:1180px) { main.app-shell { grid-template-columns:minmax(0,1fr); }.app-shell > .sidebar,.app-shell > .workspace,.nav-list { min-width:0; } }
+
+/* PBB logo */
+.brand-mark .brand-logo { display:block; width:100%; max-width:210px; height:auto; border-radius:14px; box-shadow:0 10px 28px #0000004d; }
+@media(max-width:1180px) { .brand-mark .brand-logo { width:auto; height:58px; border-radius:10px; } }
+@media(max-width:500px) { .brand-mark .brand-logo { height:50px; } }

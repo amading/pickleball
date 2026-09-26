@@ -1,97 +1,40 @@
-import { CalendarClock, Check, CircleDot, Search, Trophy, Users } from 'lucide-react'
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { CalendarClock, CircleDot, Search, Trophy, Users } from 'lucide-react'
+import { useState } from 'react'
 import './poolStage.css'
 
 type Pool = { id: string; color: string; teams: string[] }
 type ScheduledMatch = { game: number; court: string; pool: string; team1: string; team2: string; round: number }
 type Props = { pools: Pool[]; schedule: ScheduledMatch[]; scheduleMode: 'balanced' | 'manual' }
 
-const resultsKey = 'rally-hq-pool-results-v1'
-
-function matchKey(match: ScheduledMatch) {
-  return `${match.pool}::${[match.team1, match.team2].sort().join('::')}`
-}
-
-function readResults(): Record<string, string> {
-  try {
-    const saved = window.localStorage.getItem(resultsKey)
-    const parsed: unknown = saved ? JSON.parse(saved) : {}
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
-  } catch {
-    return {}
-  }
-}
-
+// Read-only view of the supplied Regall sheet. Results are never recorded here: real winners come
+// from saved final scores in organizer-created categories.
 export default function PoolStage({ pools, schedule, scheduleMode }: Props) {
-  const [selectedPool, setSelectedPool] = useState('Pool A')
+  const [selectedPool, setSelectedPool] = useState(pools[0]?.id ?? '')
   const [teamQuery, setTeamQuery] = useState('')
-  const [results, setResults] = useState<Record<string, string>>(readResults)
   const pool = pools.find((item) => item.id === selectedPool) ?? pools[0]
   const allTeams = pools.flatMap((item) => item.teams)
   const selectedTeam = allTeams.find((name) => name.toLowerCase() === teamQuery.trim().toLowerCase())
   const poolMatches = schedule.filter((match) => match.pool === pool.id).sort((a, b) => a.game - b.game)
-  const completedCount = poolMatches.filter((match) => results[matchKey(match)]).length
-  const nextMatch = poolMatches.find((match) => !results[matchKey(match)] && (!selectedTeam || match.team1 === selectedTeam || match.team2 === selectedTeam))
-  const opponent = nextMatch && selectedTeam ? (nextMatch.team1 === selectedTeam ? nextMatch.team2 : nextMatch.team1) : undefined
-
-  useLayoutEffect(() => {
-    window.localStorage.setItem(resultsKey, JSON.stringify(results))
-  }, [results])
-
-  useEffect(() => {
-    const syncResults = (event: StorageEvent) => {
-      if (event.key === resultsKey) setResults(readResults())
-    }
-    window.addEventListener('storage', syncResults)
-    return () => window.removeEventListener('storage', syncResults)
-  }, [])
-
-  const standings = (() => {
-    const rows = pool.teams.map((name, seed) => ({ name, seed: seed + 1, wins: 0, losses: 0 }))
-    const byName = new Map(rows.map((row) => [row.name, row]))
-    for (const match of poolMatches) {
-      const winner = results[matchKey(match)]
-      if (!winner) continue
-      const loser = winner === match.team1 ? match.team2 : match.team1
-      const winningRow = byName.get(winner)
-      const losingRow = byName.get(loser)
-      if (winningRow && losingRow) {
-        winningRow.wins += 1
-        losingRow.losses += 1
-      }
-    }
-    return rows.sort((a, b) => b.wins - a.wins || a.losses - b.losses || a.seed - b.seed)
-  })()
-
-  function chooseWinner(match: ScheduledMatch, winner: string) {
-    setResults((current) => ({ ...current, [matchKey(match)]: winner }))
-  }
-
-  function clearWinner(match: ScheduledMatch) {
-    setResults((current) => {
-      const updated = { ...current }
-      delete updated[matchKey(match)]
-      return updated
-    })
-  }
+  const shownMatches = selectedTeam ? poolMatches.filter((match) => match.team1 === selectedTeam || match.team2 === selectedTeam) : poolMatches
+  const firstMatch = shownMatches[0]
+  const gamesPerTeam = pool.teams.length - 1
 
   return (
     <section className="panel pool-stage-panel">
       <header className="pool-stage-header">
         <div>
-          <span className="eyebrow">ACTUAL FORMAT SHOWN IN THE SHEETS</span>
+          <span className="eyebrow">SUPPLIED SHEET · REFERENCE ONLY</span>
           <h2>Pool stage <span>·</span> Round robin</h2>
-          <p>Teams play every other team <strong>inside their own pool</strong>. Pool A teams do not face Pool B teams during this stage. Game numbers below follow the selected {scheduleMode === 'manual' ? 'sheet order' : 'proposed smart schedule'}.</p>
+          <p>Teams play every other team <strong>inside their own pool</strong>. Game numbers follow the selected {scheduleMode === 'manual' ? 'sheet order' : 'proposed smart schedule'}. No results are recorded here.</p>
         </div>
-        <span className="pool-stage-format"><CircleDot size={17} /> 9 POOLS · 3 COURTS</span>
+        <span className="pool-stage-format"><CircleDot size={17} /> {pools.length} POOLS</span>
       </header>
 
       <div className="pool-stage-facts">
-        <div><Users size={18} /><strong>5</strong><span>teams per pool</span></div>
-        <div><CalendarClock size={18} /><strong>4</strong><span>games per team</span></div>
-        <div><Trophy size={18} /><strong>10</strong><span>games per pool</span></div>
-        <p>All 9 pools make <b>90 pool games</b>. Each court rotates among its 3 assigned pools.</p>
+        <div><Users size={18} /><strong>{pool.teams.length}</strong><span>teams per pool</span></div>
+        <div><CalendarClock size={18} /><strong>{gamesPerTeam}</strong><span>games per team</span></div>
+        <div><Trophy size={18} /><strong>{poolMatches.length}</strong><span>games per pool</span></div>
+        <p>All {pools.length} pools make <b>{schedule.length} pool games</b>. Each court rotates among its assigned pools.</p>
       </div>
 
       <div className="pool-stage-controls">
@@ -102,7 +45,7 @@ export default function PoolStage({ pools, schedule, scheduleMode }: Props) {
             </button>
           ))}
         </div>
-        <label className="pool-team-search"><Search size={17} /><input aria-label="Find a pool team" list="all-pool-teams" placeholder="Find your team..." value={teamQuery} onChange={(event) => {
+        <label className="pool-team-search"><Search size={17} /><input aria-label="Find a pool team" list="all-pool-teams" placeholder="Find a team..." value={teamQuery} onChange={(event) => {
           const value = event.target.value
           setTeamQuery(value)
           const foundPool = pools.find((item) => item.teams.some((name) => name.toLowerCase() === value.trim().toLowerCase()))
@@ -111,32 +54,30 @@ export default function PoolStage({ pools, schedule, scheduleMode }: Props) {
       </div>
 
       <div className="pool-stage-next" aria-live="polite">
-        <div><span className="pool-live-dot" /><small>{selectedTeam ? 'YOUR NEXT SCHEDULED POOL GAME' : `${pool.id.toUpperCase()} · NEXT UNRECORDED GAME`}</small></div>
-        <strong>{nextMatch ? selectedTeam ? `${selectedTeam} vs ${opponent}` : `${nextMatch.team1} vs ${nextMatch.team2}` : selectedTeam ? 'No remaining pool games' : 'All pool games recorded'}</strong>
-        <span>{nextMatch ? `${nextMatch.court} · Game ${nextMatch.game}` : `${completedCount} of 10 results recorded`}</span>
+        <div><span className="pool-live-dot" /><small>{selectedTeam ? 'FIRST SCHEDULED GAME' : `${pool.id.toUpperCase()} · OPENING GAME`}</small></div>
+        <strong>{firstMatch ? `${firstMatch.team1} vs ${firstMatch.team2}` : 'No games scheduled'}</strong>
+        <span>{firstMatch ? `${firstMatch.court} · Game ${firstMatch.game}` : ''}</span>
       </div>
 
       <div className="pool-stage-content">
         <div className="pool-games-column">
-          <div className="pool-stage-section-title"><div><span className="eyebrow">{pool.id.toUpperCase()} MATCHUPS</span><h3>Everyone plays everyone.</h3></div><span>{completedCount} / 10 results</span></div>
+          <div className="pool-stage-section-title"><div><span className="eyebrow">{selectedTeam ? selectedTeam.toUpperCase() : `${pool.id.toUpperCase()} MATCHUPS`}</span><h3>Everyone plays everyone.</h3></div><span>{shownMatches.length} games</span></div>
           <div className="pool-match-list">
-            {poolMatches.map((match) => {
-              const winner = results[matchKey(match)]
-              return <article className="pool-match-card" key={matchKey(match)}>
-                <div className="pool-match-head"><span>GAME {match.game} <i>·</i> {match.court.toUpperCase()}</span>{winner ? <b className="pool-result-done"><Check size={12} /> RESULT</b> : <b className="pool-result-pending">TO PLAY</b>}</div>
+            {shownMatches.map((match) => (
+              <article className="pool-match-card" key={`${match.court}-${match.game}`}>
+                <div className="pool-match-head"><span>GAME {match.game} <i>·</i> {match.court.toUpperCase()}</span><b className="pool-result-pending">SHEET</b></div>
                 <div className="pool-match-teams">
-                  {[match.team1, match.team2].map((team) => <button type="button" key={team} className={winner === team ? 'chosen' : winner ? 'lost' : ''} aria-pressed={winner === team} onClick={() => chooseWinner(match, team)}><span>{team}</span>{winner === team && <small>WINNER</small>}</button>)}
+                  {[match.team1, match.team2].map((team) => <button type="button" disabled key={team} className={team === selectedTeam ? 'chosen' : ''}><span>{team}</span></button>)}
                 </div>
-                {winner && <button type="button" className="pool-clear-result" onClick={() => clearWinner(match)}>Clear result</button>}
               </article>
-            })}
+            ))}
           </div>
         </div>
         <aside className="pool-standings">
-          <div className="pool-stage-section-title"><div><span className="eyebrow">LIVE TABLE</span><h3>{pool.id} standings</h3></div></div>
-          <div className="standings-head"><span>TEAM</span><span>W</span><span>L</span></div>
-          {standings.map((team, index) => <div className="standings-row" key={team.name}><span className="standings-rank">{index + 1}</span><strong title={team.name}>{team.name}</strong><b>{team.wins}</b><span>{team.losses}</span></div>)}
-          <p>Standings are provisional. The screenshots do not specify playoff qualifiers or tiebreak rules.</p>
+          <div className="pool-stage-section-title"><div><span className="eyebrow">LINE-UP</span><h3>{pool.id} teams</h3></div></div>
+          <div className="standings-head"><span>TEAM</span><span>GP</span><span /></div>
+          {pool.teams.map((team, index) => <div className="standings-row" key={team}><span className="standings-rank">{index + 1}</span><strong title={team}>{team}</strong><b>{gamesPerTeam}</b><span /></div>)}
+          <p>The supplied sheets list pools and schedules only. They do not define results, qualifiers, or tiebreaks.</p>
         </aside>
       </div>
     </section>
