@@ -142,6 +142,7 @@ assertNoTokens(status, 'Registration status')
 const publicCategory = await request(`/categories/${category.id}`)
 if (publicCategory.registrations) throw new Error('Private registration list leaked to public endpoint.')
 assertNoTokens(publicCategory, 'Public category')
+if (JSON.stringify(publicCategory).includes('stationToken')) throw new Error('Public category leaked the court station token.')
 
 // Private board: games are hidden until a team code unlocks them on at most one phone per player.
 if (!publicCategory.locked || publicCategory.draw) throw new Error('Private board leaked the draw without a team code.')
@@ -173,6 +174,19 @@ await request(`/categories/${category.id}/end`, 'POST', { ended: false }, true)
 let adminCategories = await request('/admin/categories', 'GET', undefined, true)
 let adminCategory = adminCategories.find((item) => item.id === category.id)
 if (!adminCategory.draw.matches.every((match) => match.scoreToken)) throw new Error('Organizer view is missing score tokens.')
+if (!adminCategory.stationToken) throw new Error('Organizer view is missing the court station token.')
+await expectFail(`/categories/${category.id}/station`, 'GET', undefined, 'Scan the organizer court QR')
+const station = await request(`/categories/${category.id}/station`, 'GET', undefined, false, { 'x-station-token': adminCategory.stationToken })
+if (station.courts !== 1 || station.matches.length !== 10 || !station.matches[0].team1Name) throw new Error('Court station did not list assigned games.')
+assertNoTokens(station, 'Court station')
+const stationMatch = adminCategory.draw.matches[0]
+const stationHeaders = { 'x-station-token': adminCategory.stationToken }
+const stationScore = await request(`/categories/${category.id}/matches/${stationMatch.id}/score`, 'PATCH', { score1: 1, score2: 0, status: 'live', version: stationMatch.version }, false, stationHeaders)
+if (stationScore.scoreEvents?.at(-1)?.team !== 1 || stationScore.scoreEvents.at(-1).score1 !== 1) throw new Error('Court station point history did not save.')
+const stationView = await request(`/categories/${category.id}/matches/${stationMatch.id}`, 'GET', undefined, false, stationHeaders)
+if (stationView.match.scoreEvents?.length !== 1) throw new Error('Saved point history did not load on another phone.')
+adminCategories = await request('/admin/categories', 'GET', undefined, true)
+adminCategory = adminCategories.find((item) => item.id === category.id)
 
 const firstMatch = adminCategory.draw.matches[0]
 await expectFail(`/categories/${category.id}/draw`, 'DELETE', undefined, 'Organizer login')

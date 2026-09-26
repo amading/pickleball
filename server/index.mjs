@@ -324,6 +324,7 @@ function canSeeBoard(req, category, user) {
 function publicMatch(match) {
   const visible = { ...match }
   delete visible.scoreToken
+  delete visible.scoreEvents
   return visible
 }
 
@@ -414,7 +415,7 @@ function publicCategory(category, canSee = true) {
 
 function adminCategory(category) {
   return {
-    ...categorySettings(category), createdAt: category.createdAt,
+    ...categorySettings(category), createdAt: category.createdAt, stationToken: category.stationToken,
     approvedCount: category.registrations.filter((item) => item.status === 'approved').length,
     registrations: category.registrations.map(adminRegistration),
     draw: category.draw ? { pools: drawPools(category), matches: category.draw.matches, publishedAt: category.draw.publishedAt } : null,
@@ -617,6 +618,7 @@ async function beforeMigration() {
 }
 const photoCache = new Map()
 for (const category of database.categories) {
+  if (!category.stationToken) { category.stationToken = randomBytes(24).toString('base64url'); migrated = true }
   for (const [key, value] of [['pointsToWin', 11], ['winBy', 2], ['qualifyMode', 'wins'], ['qualifyTop', 2], ['requirePayment', false], ['privateBoard', true], ['endedAt', null]]) {
     if (category[key] === undefined) { category[key] = value; migrated = true }
   }
@@ -650,6 +652,7 @@ for (const category of database.categories) {
     }
   }
   for (const match of allMatches(category)) {
+    if (!Array.isArray(match.scoreEvents)) { match.scoreEvents = []; migrated = true }
     if (!match.scoreToken) { match.scoreToken = randomBytes(24).toString('base64url'); migrated = true }
     if (match.score1 === undefined) { match.score1 = 0; migrated = true }
     if (match.score2 === undefined) { match.score2 = 0; migrated = true }
@@ -857,6 +860,7 @@ const server = http.createServer(async (req, res) => {
         id: randomUUID(), title: '', division: '', format: 'doubles', eligibility: 'genderless', fee: 0, capacity: 2, poolSize: 2, courts: 1,
         pointsToWin: 11, winBy: 2, winsToQualify: 1, qualifyMode: 'top', qualifyTop: 2, requirePayment: false, privateBoard: true, endedAt: null, rules: '',
         published: true, createdAt: new Date().toISOString(), registrations: [], draw: null, playoff: null,
+        stationToken: randomBytes(24).toString('base64url'),
       }
       applySettings(category, {
         ...input,
@@ -874,6 +878,18 @@ const server = http.createServer(async (req, res) => {
     if (parts.length >= 3 && parts[1] === 'categories') {
       const category = database.categories.find((item) => item.id === parts[2])
       if (!category) return send(res, 404, { error: 'Category not found.' })
+      const stationAccess = sameSecret(req.headers['x-station-token'], category.stationToken)
+      if (req.method === 'GET' && parts[3] === 'station' && parts.length === 4) {
+        if (!user && !stationAccess) return send(res, 403, { error: 'Scan the organizer court QR to open scoring.' })
+        const names = new Map(category.registrations.map((item) => [item.id, teamView(item)]))
+        return send(res, 200, {
+          title: category.title, courts: category.courts,
+          matches: allMatches(category).map((match) => ({ ...publicMatch(match),
+            team1Name: names.get(match.team1)?.teamName ?? 'Waiting for opponent',
+            team2Name: names.get(match.team2)?.teamName ?? 'Waiting for opponent',
+          })),
+        })
+      }
       if (req.method === 'GET' && parts.length === 3) {
         if (!category.published) return send(res, 404, { error: 'Category not found.' })
         const player = playerFor(req, category)
@@ -909,16 +925,16 @@ const server = http.createServer(async (req, res) => {
         const match = allMatches(category).find((item) => item.id === parts[4])
         if (!match) return send(res, 404, { error: 'Match not found.' })
         const teamById = new Map(category.registrations.map((item) => [item.id, teamView(item)]))
-        if (req.method === 'GET' && parts.length === 5 && !canSeeBoard(req, category, user) && !sameSecret(req.headers['x-score-token'], match.scoreToken)) return send(res, 403, { error: 'This board is private. Enter your team code on the category page.' })
+        if (req.method === 'GET' && parts.length === 5 && !canSeeBoard(req, category, user) && !stationAccess && !sameSecret(req.headers['x-score-token'], match.scoreToken)) return send(res, 403, { error: 'This board is private. Enter your team code on the category page.' })
         if (req.method === 'GET' && parts.length === 5) return send(res, 200, {
           categoryId: category.id, categoryTitle: category.title, pointsToWin: category.pointsToWin ?? 11,
-          winBy: category.winBy ?? 2, match: publicMatch(match),
+          winBy: category.winBy ?? 2, match: { ...publicMatch(match), scoreEvents: match.scoreEvents ?? [] },
           team1: teamById.get(match.team1) || null, team2: teamById.get(match.team2) || null,
         })
         if (req.method === 'PATCH' && parts[5] === 'score') {
           const admin = Boolean(user)
           const token = req.headers['x-score-token']
-          if (!admin && !sameSecret(token, match.scoreToken)) return send(res, 403, { error: 'Scan the organizer QR code to score this match.' })
+          if (!admin && !stationAccess && !sameSecret(token, match.scoreToken)) return send(res, 403, { error: 'Scan the organizer QR code to score this match.' })
           if (match.status === 'bye') throw new Error('A bye advances automatically.')
           if (match.status === 'final' && !admin) throw new Error('Final score is locked. Ask the organizer to correct it.')
           if (match.stage === 'pool' && category.playoff) throw new Error('Pool scores are locked after the playoff bracket is published.')
@@ -935,7 +951,14 @@ const server = http.createServer(async (req, res) => {
             if (next && ['live', 'final'].includes(next.status)) throw new Error('The next playoff match already started with this winner. Reopen that match first.')
           }
           const previousStatus = match.status
+          const previousFirst = match.score1
+          const previousSecond = match.score2
           match.score1 = first; match.score2 = second; match.status = input.status
+          if (first !== previousFirst || second !== previousSecond) {
+            match.scoreEvents ??= []
+            match.scoreEvents.push({ id: randomUUID(), team: first !== previousFirst && second === previousSecond ? 1 : second !== previousSecond && first === previousFirst ? 2 : null,
+              change: first - previousFirst || second - previousSecond, score1: first, score2: second, at: new Date().toISOString() })
+          }
           match.winner = input.status === 'final' ? first > second ? match.team1 : match.team2 : null
           const wasFinal = previousStatus === 'final'
           match.version = (match.version ?? 0) + 1
@@ -945,7 +968,7 @@ const server = http.createServer(async (req, res) => {
           if (input.status === 'final') audit(admin ? user : null, 'Final score', category, label)
           else if (wasFinal) audit(user, 'Reopened a final score', category, label)
           await save()
-          return send(res, 200, publicMatch(match))
+          return send(res, 200, { ...publicMatch(match), scoreEvents: match.scoreEvents ?? [] })
         }
       }
       if (req.method === 'POST' && parts[3] === 'register') {

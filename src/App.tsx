@@ -5,6 +5,7 @@ import './redesign.css'
 import './bracket.css'
 import { OrganizerHub, RegistrationPortal } from './TournamentHub'
 import LiveScoring from './LiveScoring'
+import CourtStation from './CourtStation'
 import LiveDrawBoard from './LiveDrawBoard'
 import LiveOverview from './LiveOverview'
 import LiveSchedule from './LiveSchedule'
@@ -56,8 +57,9 @@ function App() {
   const activeLabel = sections.find((section) => section.id === activeSection)?.label ?? 'Dashboard'
   const params = new URLSearchParams(window.location.search)
   const scorePage = params.get('score')
+  const stationPage = params.get('station')
   const registrationPage = params.get('register')
-  const standalone = Boolean(scorePage || registrationPage)
+  const standalone = Boolean(scorePage || stationPage || registrationPage)
 
   useEffect(() => {
     if (standalone) return
@@ -89,6 +91,7 @@ function App() {
   }
 
   if (scorePage) return <LiveScoring scoreKey={scorePage} />
+  if (stationPage) return <CourtStation stationKey={stationPage} />
   if (registrationPage) return <RegistrationPortal categoryId={registrationPage} />
 
   const noCategories = <div className="live-category-empty">
