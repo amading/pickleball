@@ -1,7 +1,9 @@
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Copy, Download, ImagePlus, LockKeyhole, LogOut, Pencil, Phone, Plus, RefreshCw, Settings2, Shuffle, Sparkles, Trash2, Undo2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Copy, Download, ImagePlus, LogOut, Pencil, Phone, Plus, RefreshCw, Settings2, Shuffle, Sparkles, Trash2, Undo2, UserCog, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import './tournamentHub.css'
 import LiveDrawBoard from './LiveDrawBoard'
+import { api, download, readToken, storeToken, type AdminUser } from './adminApi'
+import { AccountPanel, LoginGate } from './OrganizerAccess'
 import { avatarSrc, qualifyRule } from './liveTypes'
 
 type Player = { name: string; gender: 'man' | 'woman' | 'other'; photo: string }
@@ -37,29 +39,6 @@ const newCategory: Settings = {
   rules: 'Round robin within each pool. Each team plays every other team in its pool once. Top teams advance to a seeded playoff bracket.',
 }
 const contactPattern = /^[+0-9 ()-]{7,20}$/
-
-async function api<T>(path: string, options: RequestInit = {}, pin = ''): Promise<T> {
-  let response: Response
-  try { response = await fetch(`/api${path}`, { ...options, cache: 'no-cache', headers: { 'Content-Type': 'application/json', ...(pin ? { 'x-admin-pin': pin } : {}), ...options.headers } }) }
-  catch { throw new Error('Cannot reach the tournament server. Check the Wi-Fi connection and try again.') }
-  const data = await response.json().catch(() => null)
-  if (!data) throw new Error('The tournament server is not responding. Make sure it is running, then try again.')
-  if (!response.ok) throw new Error(data.error || 'Request failed.')
-  return data as T
-}
-
-/** Downloads an organizer-only file (CSV or backup) using the PIN header. */
-async function download(path: string, pin: string, fallbackName: string) {
-  const response = await fetch(`/api${path}`, { headers: { 'x-admin-pin': pin } }).catch(() => null)
-  if (!response) throw new Error('Cannot reach the tournament server.')
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Download failed.')
-  const name = /filename="([^"]+)"/.exec(response.headers.get('content-disposition') || '')?.[1] || fallbackName
-  const url = URL.createObjectURL(await response.blob())
-  const link = document.createElement('a')
-  link.href = url; link.download = name
-  document.body.append(link); link.click(); link.remove()
-  URL.revokeObjectURL(url)
-}
 
 function labelFormat(value: Category['format']) { return value === 'mixed-doubles' ? 'Mixed doubles' : value === 'doubles' ? 'Doubles' : 'Singles' }
 function labelEligibility(value: Category['eligibility']) { return value === 'genderless' ? 'Genderless' : value === 'open' ? 'Open' : value === 'men' ? 'Men' : 'Women' }
@@ -132,8 +111,9 @@ function EntryEditor({ entry, busy, onSave, onCancel }: { entry: Registration; b
 }
 
 export function OrganizerHub() {
-  const [pin, setPin] = useState(() => window.sessionStorage.getItem('rally-admin-pin') || '')
-  const [authenticated, setAuthenticated] = useState(false)
+  const [token, setToken] = useState(readToken)
+  const [user, setUser] = useState<AdminUser | null>(null)
+  const [showAccount, setShowAccount] = useState(false)
   const [categories, setCategories] = useState<Category[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [error, setError] = useState('')
@@ -145,22 +125,32 @@ export function OrganizerHub() {
   const [publicBase, setPublicBase] = useState(window.location.origin)
   const selected = categories.find((item) => item.id === selectedId) ?? categories[0]
 
-  useEffect(() => {
-    const saved = window.sessionStorage.getItem('rally-admin-pin')
-    if (saved && pin === saved) void refresh(saved)
-  }, [pin])
+  const authenticated = Boolean(user)
 
-  async function refresh(currentPin = pin) {
+  useEffect(() => {
+    if (!token) return
+    api<{ user: AdminUser }>('/admin/me', {}, token).then((result) => { setUser(result.user); void refresh(token) }).catch((problem) => {
+      // An expired or revoked session sends the organizer back to sign in.
+      if ((problem as { status?: number }).status === 401) signOutLocally()
+      else setError((problem as Error).message)
+    })
+  }, [token])
+
+  async function refresh(currentToken = token) {
     try {
-      const items = await api<Category[]>('/admin/categories', {}, currentPin)
+      const items = await api<Category[]>('/admin/categories', {}, currentToken)
       setCategories(items)
       setSelectedId((old) => items.some((item) => item.id === old) ? old : items[0]?.id || '')
-      setAuthenticated(true)
       setError('')
     } catch (problem) {
-      setAuthenticated(false)
+      if ((problem as { status?: number }).status === 401) signOutLocally()
       setError((problem as Error).message)
     }
+  }
+
+  function signOutLocally() {
+    storeToken('')
+    setToken(''); setUser(null); setCategories([]); setShowAccount(false); setForm(null)
   }
 
   useEffect(() => {
@@ -168,10 +158,10 @@ export function OrganizerHub() {
   }, [])
 
   useEffect(() => {
-    if (!pin || !authenticated) return
-    const timer = window.setInterval(() => { void refresh(pin) }, 4000)
+    if (!token || !authenticated) return
+    const timer = window.setInterval(() => { void refresh(token) }, 4000)
     return () => window.clearInterval(timer)
-  }, [pin, authenticated])
+  }, [token, authenticated])
 
   /** Runs one organizer action with a shared busy flag, success notice, and refresh. */
   async function run(action: () => Promise<unknown>, success: string) {
@@ -181,26 +171,22 @@ export function OrganizerHub() {
     finally { setBusy(false) }
   }
 
-  async function login(event: React.FormEvent) {
-    event.preventDefault()
-    try {
-      await api('/admin/login', { method: 'POST' }, pin)
-      window.sessionStorage.setItem('rally-admin-pin', pin)
-      await refresh(pin)
-    } catch (problem) { window.sessionStorage.removeItem('rally-admin-pin'); setError((problem as Error).message) }
+  function signedIn(nextToken: string, nextUser: AdminUser) {
+    storeToken(nextToken)
+    setUser(nextUser); setToken(nextToken); setError(''); setNotice(`Welcome, ${nextUser.name}.`)
   }
 
   function logout() {
-    window.sessionStorage.removeItem('rally-admin-pin')
-    setPin(''); setAuthenticated(false); setCategories([]); setNotice(''); setError('')
+    void api('/admin/logout', { method: 'POST' }, token).catch(() => {})
+    signOutLocally(); setNotice(''); setError('')
   }
 
   function saveCategory(settings: Settings) {
     if (form === 'edit' && selected) {
-      void run(async () => { await api(`/categories/${selected.id}`, { method: 'PATCH', body: JSON.stringify(settings) }, pin); setForm(null) }, `${settings.title} updated.`)
+      void run(async () => { await api(`/categories/${selected.id}`, { method: 'PATCH', body: JSON.stringify(settings) }, token); setForm(null) }, `${settings.title} updated.`)
     } else {
       void run(async () => {
-        const created = await api<Category>('/categories', { method: 'POST', body: JSON.stringify(settings) }, pin)
+        const created = await api<Category>('/categories', { method: 'POST', body: JSON.stringify(settings) }, token)
         setForm(null); setSelectedId(created.id)
       }, 'Category is live. Copy its link and share it with players.')
     }
@@ -210,27 +196,27 @@ export function OrganizerHub() {
     if (!selected) return
     const played = selected.draw ? ' Its draw, scores, and bracket will be erased too.' : ''
     if (!window.confirm(`Delete "${selected.title}" and all ${selected.registrations?.length ?? 0} registrations?${played} A backup is saved first, but the category disappears for everyone.`)) return
-    void run(async () => { await api(`/categories/${selected.id}`, { method: 'DELETE' }, pin); setSelectedId('') }, `${selected.title} was deleted. A backup copy was saved on the server.`)
+    void run(async () => { await api(`/categories/${selected.id}`, { method: 'DELETE' }, token); setSelectedId('') }, `${selected.title} was deleted. A backup copy was saved on the server.`)
   }
 
   function patchEntry(entry: Registration, patch: Record<string, unknown>, success: string) {
     if (!selected) return
-    void run(async () => { await api(`/categories/${selected.id}/registrations/${entry.id}`, { method: 'PATCH', body: JSON.stringify(patch) }, pin); setEditingEntry('') }, success)
+    void run(async () => { await api(`/categories/${selected.id}/registrations/${entry.id}`, { method: 'PATCH', body: JSON.stringify(patch) }, token); setEditingEntry('') }, success)
   }
 
   function setQualification(patch: Partial<Settings>) {
     if (!selected) return
-    void run(() => api(`/categories/${selected.id}`, { method: 'PATCH', body: JSON.stringify(patch) }, pin), '')
+    void run(() => api(`/categories/${selected.id}`, { method: 'PATCH', body: JSON.stringify(patch) }, token), '')
   }
 
   function undoDraw() {
     if (!selected || !window.confirm('Undo the draw? Pools and matches are removed so you can change entries and draw again. Players will see registration reopen.')) return
-    void run(() => api(`/categories/${selected.id}/draw`, { method: 'DELETE' }, pin), 'Draw undone. Entries are editable again.')
+    void run(() => api(`/categories/${selected.id}/draw`, { method: 'DELETE' }, token), 'Draw undone. Entries are editable again.')
   }
 
   function exportFile(path: string, name: string) {
     setError('')
-    download(path, pin, name).catch((problem) => setError((problem as Error).message))
+    download(path, token, name).catch((problem) => setError((problem as Error).message))
   }
 
   async function copyLink(id: string) {
@@ -238,7 +224,7 @@ export function OrganizerHub() {
     catch { setNotice(registrationUrl(id, publicBase)) }
   }
 
-  if (!authenticated) return <section className="hub-admin-login"><span className="hub-login-icon"><LockKeyhole size={27} /></span><span className="hub-eyebrow">ORGANIZER ACCESS</span><h2>Run your tournament.</h2><p>Enter the organizer PIN to create categories, review registrations, and publish draws.</p><form onSubmit={login}><input type="password" inputMode="numeric" aria-label="Organizer PIN" placeholder="Organizer PIN" value={pin} onChange={(event) => setPin(event.target.value)} required /><button type="submit">Open organizer desk <ArrowRight size={17} /></button></form>{error && <p className="hub-error">{error}</p>}</section>
+  if (!user) return token ? <div className="hub-empty">{error || 'Signing in...'}</div> : <LoginGate onSignedIn={signedIn} />
 
   const entries = selected?.registrations ?? []
   const unpaid = entries.filter((item) => item.status !== 'rejected' && !item.paid)
@@ -247,7 +233,8 @@ export function OrganizerHub() {
   const maxWins = Math.max(1, (selected?.poolSize ?? 2) - 1)
 
   return <div className="hub-admin">
-    <div className="hub-admin-hero"><div><span className="hub-eyebrow">ORGANIZER DESK / LIVE OPERATIONS</span><h1>Build the draw.<br /><em>Bring players in.</em></h1><p>Post a category, confirm payments, approve teams, then publish the random pool draw. Every player sees the same assignments through the registration link.</p></div><div className="hub-hero-actions"><button type="button" onClick={() => { setForm('create'); setError('') }}><Plus size={18} /> New category</button><button type="button" className="hub-logout" onClick={logout}><LogOut size={16} /> Sign out</button></div></div>
+    <div className="hub-admin-hero"><div><span className="hub-eyebrow">ORGANIZER DESK / LIVE OPERATIONS</span><h1>Build the draw.<br /><em>Bring players in.</em></h1><p>Post a category, confirm payments, approve teams, then publish the random pool draw. Every player sees the same assignments through the registration link.</p></div><div className="hub-hero-actions"><button type="button" onClick={() => { setForm('create'); setError('') }}><Plus size={18} /> New category</button><button type="button" className="hub-logout" onClick={() => setShowAccount((open) => !open)}><UserCog size={16} /> {user.name}</button><button type="button" className="hub-logout" onClick={logout}><LogOut size={16} /> Sign out</button></div></div>
+    {showAccount && <AccountPanel token={token} user={user} onClose={() => setShowAccount(false)} />}
     {notice && <div className="hub-notice"><CheckCircle2 size={18} /> {notice}<button type="button" aria-label="Dismiss" onClick={() => setNotice('')}><X size={16} /></button></div>}
     {error && <div className="hub-error">{error}</div>}
     {form === 'create' && <CategoryForm initial={newCategory} busy={busy} onSubmit={saveCategory} onClose={() => setForm(null)} />}
@@ -291,7 +278,7 @@ export function OrganizerHub() {
         </div>
         <div className="hub-section-heading"><div><span className="hub-eyebrow">TEAM ROSTER</span><h2>Player registrations</h2></div>
           {!selected.draw
-            ? <button className="hub-draw-button" type="button" disabled={busy || approvedCount < 2} onClick={() => void run(() => api(`/categories/${selected.id}/draw`, { method: 'POST' }, pin), 'Random draw published. Players can now see their pool and matches.')}><Shuffle size={17} /> Randomize & publish draw</button>
+            ? <button className="hub-draw-button" type="button" disabled={busy || approvedCount < 2} onClick={() => void run(() => api(`/categories/${selected.id}/draw`, { method: 'POST' }, token), 'Random draw published. Players can now see their pool and matches.')}><Shuffle size={17} /> Randomize & publish draw</button>
             : !hasResults(selected) && <button className="hub-undo-button" type="button" disabled={busy} onClick={undoDraw}><Undo2 size={16} /> Undo draw</button>}
         </div>
         {!selected.draw && <p className="hub-helper">Only approved teams enter the draw.{selected.requirePayment ? ' Mark a team paid before approving it.' : ''} Once published, entries lock so players see a stable schedule; you can undo the draw until the first point is scored.</p>}
@@ -317,7 +304,7 @@ export function OrganizerHub() {
             {editingEntry === entry.id && <EntryEditor entry={entry} busy={busy} onCancel={() => setEditingEntry('')} onSave={(patch) => patchEntry(entry, patch, `${entry.teamName} updated.`)} />}
           </article>
         }) : <div className="hub-empty">{entries.length ? 'No entries match this filter.' : 'No player registrations yet. Share the category link to start collecting teams.'}</div>}</div>
-        {selected.draw && <LiveDrawBoard category={selected} organizer publicBase={publicBase} onPublishPlayoff={() => void run(() => api(`/categories/${selected.id}/playoff`, { method: 'POST' }, pin), 'Playoff bracket published. QR scoring now advances winners automatically.')} busy={busy} />}
+        {selected.draw && <LiveDrawBoard category={selected} organizer publicBase={publicBase} onPublishPlayoff={() => void run(() => api(`/categories/${selected.id}/playoff`, { method: 'POST' }, token), 'Playoff bracket published. QR scoring now advances winners automatically.')} busy={busy} />}
       </>}
     </>}
   </div>

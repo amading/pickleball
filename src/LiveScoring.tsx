@@ -2,6 +2,7 @@ import { ArrowLeft, CheckCircle2, Minus, Plus, RefreshCw, Trophy } from 'lucide-
 import { useEffect, useState } from 'react'
 import './liveScoring.css'
 import { avatarSrc } from './liveTypes'
+import { authHeaders, readToken } from './adminApi'
 
 type Team = { id: string; teamName: string; players: { name: string; photo: string }[] }
 type Match = { id: string; stage: 'pool' | 'playoff'; pool?: string; round?: number; court: string; game?: number; team1: string | null; team2: string | null; score1: number; score2: number; status: 'scheduled' | 'live' | 'final' | 'bye'; winner: string | null; version: number }
@@ -20,7 +21,8 @@ export default function LiveScoring({ scoreKey }: { scoreKey: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [refreshIndex, setRefreshIndex] = useState(0)
-  const adminPin = window.sessionStorage.getItem('rally-admin-pin') || ''
+  // Signed-in organizers may correct or reopen final scores from this page.
+  const adminToken = readToken()
   const invalidScoreKey = !categoryId || !matchId || !token
 
   useEffect(() => {
@@ -45,7 +47,7 @@ export default function LiveScoring({ scoreKey }: { scoreKey: string }) {
     setBusy(true); setError('')
     try {
       const response = await fetch(`/api/categories/${categoryId}/matches/${matchId}/score`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-score-token': token, ...(adminPin ? { 'x-admin-pin': adminPin } : {}) },
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-score-token': token, ...authHeaders(adminToken) },
         body: JSON.stringify({ score1, score2, status, version: data.match.version }),
       })
       const value = await response.json().catch(() => null)
@@ -58,7 +60,7 @@ export default function LiveScoring({ scoreKey }: { scoreKey: string }) {
   }
 
   const match = data?.match
-  const canScore = Boolean(token) && Boolean(data?.team1 && data.team2) && (match?.status !== 'final' || Boolean(adminPin)) && match?.status !== 'bye'
+  const canScore = Boolean(token) && Boolean(data?.team1 && data.team2) && (match?.status !== 'final' || Boolean(adminToken)) && match?.status !== 'bye'
   const leader = match && match.score1 !== match.score2 ? (match.score1 > match.score2 ? data?.team1 : data?.team2) : null
   const finalWinner = match?.winner === data?.team1?.id ? data?.team1 : match?.winner === data?.team2?.id ? data?.team2 : null
   const canFinalize = Boolean(match && validFinal(match.score1, match.score2, data?.pointsToWin ?? 11, data?.winBy ?? 2))
@@ -79,7 +81,7 @@ export default function LiveScoring({ scoreKey }: { scoreKey: string }) {
       })}</div>
       <div className="score-rule-bar"><span>GAME RULE</span><strong>First to {data.pointsToWin} · Win by {data.winBy}</strong><p>Each point saves instantly and appears on the organizer and player pages.</p></div>
       {error && <div className="score-error">{error}</div>}
-      {match?.status === 'final' ? <div className="score-final"><CheckCircle2 size={20} /> Result saved. Winner is {finalWinner?.teamName || 'confirmed'}.{match.stage === 'playoff' ? ' Bracket advanced automatically.' : ' Standings updated automatically.'}{adminPin && <button type="button" disabled={busy} onClick={() => void save(match.score1, match.score2, 'live')}>Reopen as organizer</button>}</div> : <button className="score-finish" type="button" disabled={!canScore || !canFinalize || busy} onClick={() => { if (match) void save(match.score1, match.score2, 'final') }}><Trophy size={20} /> Finalize winner {leader ? `· ${leader.teamName}` : ''}</button>}
+      {match?.status === 'final' ? <div className="score-final"><CheckCircle2 size={20} /> Result saved. Winner is {finalWinner?.teamName || 'confirmed'}.{match.stage === 'playoff' ? ' Bracket advanced automatically.' : ' Standings updated automatically.'}{adminToken && <button type="button" disabled={busy} onClick={() => void save(match.score1, match.score2, 'live')}>Reopen as organizer</button>}</div> : <button className="score-finish" type="button" disabled={!canScore || !canFinalize || busy} onClick={() => { if (match) void save(match.score1, match.score2, 'final') }}><Trophy size={20} /> Finalize winner {leader ? `· ${leader.teamName}` : ''}</button>}
       {!canFinalize && match?.status !== 'final' && <p className="score-hint">Reach {data.pointsToWin} points with a {data.winBy}-point lead to finalize. Past {data.pointsToWin}, the game ends as soon as the lead is {data.winBy}.</p>}
     </> : <div className="score-loading">{invalidScoreKey ? 'This scoring QR link is incomplete.' : error || 'Loading the match...'}</div>}
   </div></main>

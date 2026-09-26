@@ -85,3 +85,25 @@
   .hub-export-row button{flex:1 1 45%;justify-content:center}
   .hub-heading-tools{width:100%;justify-content:space-between}
 }
+/* Organizer accounts */
+.hub-admin-login form.hub-login-form{flex-direction:column}
+.hub-admin-login form.hub-login-form input{flex:none;font:inherit}
+.hub-admin-login form.hub-login-form button{cursor:pointer}
+.hub-admin-login .hub-link-button{display:inline-block;margin-top:14px;padding:6px;border:0;background:transparent;color:#2f6b3a;font-size:13px;font-weight:800;text-decoration:underline;cursor:pointer}
+.hub-account-panel .hub-entry-filters button{display:inline-flex;align-items:center;gap:5px}
+.hub-account-notice{padding:10px 13px;border-radius:10px;background:#eef9e3;color:#3a793b;font-size:13px;font-weight:700}
+.hub-entry-edit select{min-height:38px;padding:0 8px;border:1px solid #d3e0cd;border-radius:8px;font:inherit;font-size:13px;background:#fff}
+.hub-entry-edit button{display:inline-flex;align-items:center;gap:6px}
+.hub-user-list{display:grid;gap:8px;margin-bottom:14px}
+.hub-user{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border:1px solid #e3ebdf;border-radius:11px}
+.hub-user.disabled{opacity:.55}
+.hub-user strong{display:block;font-size:14px}
+.hub-user small{color:#758574;font-size:11px}
+.hub-user-actions{display:flex;flex-wrap:wrap;gap:6px}
+.hub-user-actions button{padding:7px 10px;border:1px solid #d3e3ca;border-radius:8px;background:#fff;color:#2e5b31;font-size:11px;font-weight:800;cursor:pointer}
+.hub-user-actions button.danger{border-color:#f0c7c0;background:#fff4f2;color:#a3372a}
+.hub-activity{display:grid;gap:0;max-height:420px;margin:0;padding:0;overflow:auto;list-style:none;border:1px solid #e3ebdf;border-radius:11px}
+.hub-activity li{display:grid;grid-template-columns:120px 130px minmax(0,1fr);gap:10px;padding:9px 12px;border-bottom:1px solid #eef2eb;font-size:12px}
+.hub-activity time{color:#8a998a}
+.hub-activity span{overflow-wrap:anywhere;color:#3b4a3e}
+@media(max-width:620px){.hub-admin-login{margin:24px auto;padding:28px 20px}.hub-admin-login h2{font-size:32px}.hub-activity li{grid-template-columns:1fr;gap:2px}}

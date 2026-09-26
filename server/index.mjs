@@ -1,5 +1,6 @@
 import http from 'node:http'
-import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, randomInt, randomUUID, scrypt, timingSafeEqual } from 'node:crypto'
+import { promisify } from 'node:util'
 import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
 import { homedir, networkInterfaces } from 'node:os'
@@ -30,6 +31,8 @@ const imageExtensions = { jpeg: 'jpg', png: 'png', webp: 'webp' }
 const photoIdPattern = /^[0-9a-f-]{36}\.(jpg|png|webp)$/
 const staticTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.json': 'application/json' }
 const failedLogins = new Map()
+const scryptAsync = promisify(scrypt)
+const sessionDays = 14
 let database = { categories: [] }
 let saving = Promise.resolve()
 let lastBackupAt = 0
@@ -37,7 +40,8 @@ let lastBackupAt = 0
 await mkdir(photoDir, { recursive: true })
 await mkdir(backupDir, { recursive: true })
 
-// A stable organizer PIN: ADMIN_PIN wins; otherwise one is generated once and kept next to the data.
+// The setup/recovery PIN: ADMIN_PIN wins; otherwise one is generated once and kept next to the data.
+// It creates the first owner account and resets forgotten passwords; day-to-day login uses accounts.
 let adminPin = process.env.ADMIN_PIN
 if (!adminPin) {
   try { adminPin = (await readFile(pinFile, 'utf8')).trim() } catch { /* first run */ }
@@ -53,6 +57,9 @@ try {
 } catch (error) {
   if (error.code !== 'ENOENT') throw error
 }
+database.users ??= []
+database.sessions ??= []
+database.audit ??= []
 
 function stamp() {
   return new Date().toISOString().replace(/[:.]/g, '-')
@@ -178,14 +185,79 @@ function loginLocked(req) {
   return (failedLogins.get(clientKey(req))?.until ?? 0) > Date.now()
 }
 
-function authorized(req) {
-  if (typeof req.headers['x-admin-pin'] !== 'string' || loginLocked(req)) return false
+/** Five failed logins or PIN checks lock this address out, doubling from two minutes on each further miss. */
+function noteFailure(req) {
   const key = clientKey(req)
-  if (sameSecret(req.headers['x-admin-pin'], adminPin)) { failedLogins.delete(key); return true }
-  // Five wrong PINs lock this address out, doubling from two minutes on each further miss.
   const count = (failedLogins.get(key)?.count ?? 0) + 1
   failedLogins.set(key, { count, until: count >= 5 ? Date.now() + 120_000 * 2 ** Math.min(count - 5, 5) : 0 })
-  return false
+}
+
+function lockedError() {
+  return new Error('Too many failed attempts. Wait a few minutes and try again.')
+}
+
+function checkPin(req, pin) {
+  if (loginLocked(req)) throw lockedError()
+  if (!sameSecret(pin, adminPin)) { noteFailure(req); throw new Error('Incorrect setup PIN. It is printed in the server terminal.') }
+  failedLogins.delete(clientKey(req))
+}
+
+async function hashPassword(password) {
+  const salt = randomBytes(16)
+  return `scrypt:${salt.toString('base64')}:${(await scryptAsync(password, salt, 64)).toString('base64')}`
+}
+
+async function passwordMatches(password, stored) {
+  const [, salt, hash] = String(stored || 'scrypt:AAAA:AAAA').split(':')
+  const actual = await scryptAsync(password, Buffer.from(salt, 'base64'), 64)
+  const expected = Buffer.from(hash, 'base64')
+  return actual.length === expected.length && timingSafeEqual(actual, expected)
+}
+
+function validUsername(value) {
+  const name = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (!/^[a-z0-9._-]{3,32}$/.test(name)) throw new Error('Username: 3-32 letters, numbers, dots, dashes, or underscores.')
+  return name
+}
+
+function validPassword(value) {
+  if (typeof value !== 'string' || value.length < 8 || value.length > 200) throw new Error('Password must be at least 8 characters.')
+  return value
+}
+
+function tokenHash(token) {
+  return createHash('sha256').update(token).digest('hex')
+}
+
+function publicUser(user) {
+  return { id: user.id, username: user.username, name: user.name, role: user.role, disabled: Boolean(user.disabled), createdAt: user.createdAt, lastLoginAt: user.lastLoginAt ?? null }
+}
+
+/** The signed-in organizer for this request, from a Bearer session token, or null. */
+function currentUser(req) {
+  const header = String(req.headers.authorization || '')
+  if (!header.startsWith('Bearer ')) return null
+  const hash = tokenHash(header.slice(7).trim())
+  const session = database.sessions.find((item) => item.tokenHash === hash && item.expiresAt > Date.now())
+  const user = session && database.users.find((item) => item.id === session.userId)
+  return user && !user.disabled ? user : null
+}
+
+function startSession(user) {
+  const token = randomBytes(32).toString('base64url')
+  database.sessions = database.sessions.filter((item) => item.expiresAt > Date.now())
+  database.sessions.push({ tokenHash: tokenHash(token), userId: user.id, expiresAt: Date.now() + sessionDays * 86_400_000 })
+  user.lastLoginAt = new Date().toISOString()
+  return token
+}
+
+function audit(user, action, category, detail = '') {
+  database.audit.unshift({ at: new Date().toISOString(), by: user ? user.name : 'Court QR', username: user?.username ?? null, action, category: category?.title ?? null, detail })
+  database.audit.length = Math.min(database.audit.length, 1000)
+}
+
+function activeOwners() {
+  return database.users.filter((item) => item.role === 'owner' && !item.disabled)
 }
 
 function validFinal(first, second, pointsToWin, winBy) {
@@ -631,23 +703,109 @@ const server = http.createServer(async (req, res) => {
       } catch { return send(res, 404, { error: 'Photo not found.' }) }
     }
 
+    const user = currentUser(req)
+    if (req.method === 'GET' && url.pathname === '/api/admin/status') return send(res, 200, { needsSetup: database.users.length === 0 })
+    if (req.method === 'POST' && url.pathname === '/api/admin/setup') {
+      const input = await body(req)
+      if (database.users.length) throw new Error('Setup is already done. Sign in instead.')
+      checkPin(req, input.pin)
+      const owner = { id: randomUUID(), username: validUsername(input.username), name: requiredText(input.name, 'Your name', 60), role: 'owner', passwordHash: await hashPassword(validPassword(input.password)), createdAt: new Date().toISOString() }
+      database.users.push(owner)
+      const token = startSession(owner)
+      audit(owner, 'Created the owner account', null)
+      await save()
+      return send(res, 201, { token, user: publicUser(owner) })
+    }
     if (req.method === 'POST' && url.pathname === '/api/admin/login') {
-      if (authorized(req)) return send(res, 200, { ok: true })
-      return send(res, loginLocked(req) ? 429 : 401, { error: loginLocked(req) ? 'Too many wrong PINs. Wait a few minutes and try again.' : 'Incorrect organizer PIN.' })
+      const input = await body(req)
+      if (loginLocked(req)) return send(res, 429, { error: lockedError().message })
+      const account = database.users.find((item) => item.username === String(input.username || '').trim().toLowerCase())
+      // Hash even for unknown usernames so response time does not reveal which accounts exist.
+      const matches = await passwordMatches(String(input.password || ''), account?.passwordHash)
+      if (!account || !matches) { noteFailure(req); return send(res, 401, { error: 'Wrong username or password.' }) }
+      if (account.disabled) return send(res, 403, { error: 'This organizer account is disabled. Ask the owner.' })
+      failedLogins.delete(clientKey(req))
+      const token = startSession(account)
+      await save()
+      return send(res, 200, { token, user: publicUser(account) })
+    }
+    if (req.method === 'POST' && url.pathname === '/api/admin/recover') {
+      const input = await body(req)
+      checkPin(req, input.pin)
+      const account = database.users.find((item) => item.username === String(input.username || '').trim().toLowerCase())
+      if (!account) throw new Error('No organizer has that username.')
+      account.passwordHash = await hashPassword(validPassword(input.password))
+      account.disabled = false
+      database.sessions = database.sessions.filter((item) => item.userId !== account.id)
+      const token = startSession(account)
+      audit(account, 'Reset own password with the setup PIN', null)
+      await save()
+      return send(res, 200, { token, user: publicUser(account) })
+    }
+    if (url.pathname.startsWith('/api/admin/') && !user) return send(res, 401, { error: 'Organizer login required.' })
+    if (req.method === 'GET' && url.pathname === '/api/admin/me') return send(res, 200, { user: publicUser(user) })
+    if (req.method === 'POST' && url.pathname === '/api/admin/logout') {
+      const hash = tokenHash(String(req.headers.authorization).slice(7).trim())
+      database.sessions = database.sessions.filter((item) => item.tokenHash !== hash)
+      await save()
+      return send(res, 200, { ok: true })
+    }
+    if (req.method === 'POST' && url.pathname === '/api/admin/password') {
+      const input = await body(req)
+      if (!(await passwordMatches(String(input.current || ''), user.passwordHash))) throw new Error('Current password is wrong.')
+      user.passwordHash = await hashPassword(validPassword(input.next))
+      const keep = tokenHash(String(req.headers.authorization).slice(7).trim())
+      database.sessions = database.sessions.filter((item) => item.userId !== user.id || item.tokenHash === keep)
+      audit(user, 'Changed own password', null)
+      await save()
+      return send(res, 200, { ok: true })
+    }
+    if (req.method === 'GET' && url.pathname === '/api/admin/activity') return send(res, 200, database.audit.slice(0, 200))
+    if (parts[1] === 'admin' && parts[2] === 'users') {
+      if (user.role !== 'owner') return send(res, 403, { error: 'Only the owner can manage organizer accounts.' })
+      if (req.method === 'GET' && parts.length === 3) return send(res, 200, database.users.map(publicUser))
+      if (req.method === 'POST' && parts.length === 3) {
+        const input = await body(req)
+        const username = validUsername(input.username)
+        if (database.users.some((item) => item.username === username)) throw new Error('That username is taken.')
+        const account = { id: randomUUID(), username, name: requiredText(input.name, 'Name', 60), role: input.role === 'owner' ? 'owner' : 'organizer', passwordHash: await hashPassword(validPassword(input.password)), createdAt: new Date().toISOString() }
+        database.users.push(account)
+        audit(user, `Added ${account.role} ${account.name} (${account.username})`, null)
+        await save()
+        return send(res, 201, publicUser(account))
+      }
+      const account = database.users.find((item) => item.id === parts[3])
+      if (req.method === 'PATCH' && account && parts.length === 4) {
+        const input = await body(req)
+        const next = { ...account }
+        if (input.name !== undefined) next.name = requiredText(input.name, 'Name', 60)
+        if (input.role !== undefined) next.role = input.role === 'owner' ? 'owner' : 'organizer'
+        if (input.disabled !== undefined) next.disabled = Boolean(input.disabled)
+        if (account.id === user.id && (next.disabled || next.role !== 'owner')) throw new Error('You cannot disable or demote your own account.')
+        if (account.role === 'owner' && (next.disabled || next.role !== 'owner') && activeOwners().length <= 1) throw new Error('Keep at least one active owner.')
+        if (input.password !== undefined) next.passwordHash = await hashPassword(validPassword(input.password))
+        Object.assign(account, next)
+        if (next.disabled || input.password !== undefined) database.sessions = database.sessions.filter((item) => item.userId !== account.id)
+        audit(user, [input.password !== undefined && `Reset password for ${account.name}`, input.disabled !== undefined && `${account.disabled ? 'Disabled' : 'Enabled'} ${account.name}`, input.role !== undefined && `Set ${account.name} as ${account.role}`].filter(Boolean).join('; ') || `Updated ${account.name}`, null)
+        await save()
+        return send(res, 200, publicUser(account))
+      }
+      return send(res, 404, { error: 'Organizer not found.' })
     }
     if (req.method === 'GET' && url.pathname === '/api/categories') {
       return send(res, 200, database.categories.filter((item) => item.published).map(publicCategory))
     }
     if (req.method === 'GET' && url.pathname === '/api/admin/categories') {
-      if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
+      if (!user) return send(res, 401, { error: 'Organizer login required.' })
       return send(res, 200, database.categories.map(adminCategory))
     }
     if (req.method === 'GET' && url.pathname === '/api/admin/backup') {
-      if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
-      return sendFile(res, 200, JSON.stringify(database, null, 2), 'application/json; charset=utf-8', `pbb-backup-${stamp()}.json`)
+      if (!user) return send(res, 401, { error: 'Organizer login required.' })
+      // Session tokens stay on the server; the download still includes accounts so a restore keeps logins working.
+      return sendFile(res, 200, JSON.stringify({ ...database, sessions: [] }, null, 2), 'application/json; charset=utf-8', `pbb-backup-${stamp()}.json`)
     }
     if (req.method === 'POST' && url.pathname === '/api/categories') {
-      if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
+      if (!user) return send(res, 401, { error: 'Organizer login required.' })
       const input = await body(req)
       const category = {
         id: randomUUID(), title: '', division: '', format: 'doubles', eligibility: 'genderless', fee: 0, capacity: 2, poolSize: 2, courts: 1,
@@ -663,6 +821,7 @@ const server = http.createServer(async (req, res) => {
         qualifyMode: input.qualifyMode ?? 'top',
       }, true)
       database.categories.unshift(category)
+      audit(user, 'Created category', category)
       await save()
       return send(res, 201, adminCategory(category))
     }
@@ -674,24 +833,27 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, publicCategory(category))
       }
       if (req.method === 'PATCH' && parts.length === 3) {
-        if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
+        if (!user) return send(res, 401, { error: 'Organizer login required.' })
         const input = await body(req)
         // Validate on a copy so a rejected edit changes nothing.
         const draft = structuredClone(category)
         applySettings(draft, input, false)
+        const changed = Object.keys(input).filter((key) => JSON.stringify(category[key]) !== JSON.stringify(draft[key]))
         Object.assign(category, draft)
+        audit(user, 'Edited settings', category, changed.join(', '))
         await save()
         return send(res, 200, adminCategory(category))
       }
       if (req.method === 'DELETE' && parts.length === 3) {
-        if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
+        if (!user) return send(res, 401, { error: 'Organizer login required.' })
         await backupNow('before-delete')
         database.categories = database.categories.filter((item) => item.id !== category.id)
+        audit(user, 'Deleted category', category, `${category.registrations.length} registrations`)
         await save()
         return send(res, 200, { ok: true })
       }
       if (req.method === 'GET' && parts[3] === 'export') {
-        if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
+        if (!user) return send(res, 401, { error: 'Organizer login required.' })
         const kind = ['registrations', 'results', 'standings'].includes(url.searchParams.get('kind')) ? url.searchParams.get('kind') : 'results'
         const safeTitle = category.title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'category'
         return sendFile(res, 200, toCsv(exportRows(category, kind)), 'text/csv; charset=utf-8', `${safeTitle}-${kind}.csv`)
@@ -706,7 +868,7 @@ const server = http.createServer(async (req, res) => {
           team1: teamById.get(match.team1) || null, team2: teamById.get(match.team2) || null,
         })
         if (req.method === 'PATCH' && parts[5] === 'score') {
-          const admin = authorized(req)
+          const admin = Boolean(user)
           const token = req.headers['x-score-token']
           if (!admin && !sameSecret(token, match.scoreToken)) return send(res, 403, { error: 'Scan the organizer QR code to score this match.' })
           if (match.status === 'bye') throw new Error('A bye advances automatically.')
@@ -724,10 +886,16 @@ const server = http.createServer(async (req, res) => {
             const next = dependentMatch(category.playoff.rounds, match)
             if (next && ['live', 'final'].includes(next.status)) throw new Error('The next playoff match already started with this winner. Reopen that match first.')
           }
+          const previousStatus = match.status
           match.score1 = first; match.score2 = second; match.status = input.status
           match.winner = input.status === 'final' ? first > second ? match.team1 : match.team2 : null
+          const wasFinal = previousStatus === 'final'
           match.version = (match.version ?? 0) + 1
           if (match.stage === 'playoff') advancePlayoff(category.playoff.rounds)
+          const names = new Map(category.registrations.map((item) => [item.id, item.teamName]))
+          const label = `${match.stage === 'pool' ? `${match.pool} game ${match.game}` : 'Playoff'}: ${names.get(match.team1)} ${match.score1}-${match.score2} ${names.get(match.team2)}`
+          if (input.status === 'final') audit(admin ? user : null, 'Final score', category, label)
+          else if (wasFinal) audit(user, 'Reopened a final score', category, label)
           await save()
           return send(res, 200, publicMatch(match))
         }
@@ -773,7 +941,7 @@ const server = http.createServer(async (req, res) => {
         })
       }
       if (req.method === 'PATCH' && parts[3] === 'registrations' && parts[4]) {
-        if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
+        if (!user) return send(res, 401, { error: 'Organizer login required.' })
         const registration = category.registrations.find((item) => item.id === parts[4])
         if (!registration) return send(res, 404, { error: 'Registration not found.' })
         const input = await body(req)
@@ -796,30 +964,41 @@ const server = http.createServer(async (req, res) => {
           if (input.status === 'approved' && category.requirePayment && !next.paid) throw new Error(`Mark ${next.teamName} as paid before approving.`)
           next.status = input.status
         }
+        const changes = [
+          next.status !== registration.status && next.status,
+          next.paid !== registration.paid && (next.paid ? 'marked paid' : 'marked unpaid'),
+          next.teamName !== registration.teamName && `renamed from ${registration.teamName}`,
+          JSON.stringify(next.players) !== JSON.stringify(registration.players) && 'player names edited',
+          (next.contact !== registration.contact || next.paymentRef !== registration.paymentRef) && 'contact/reference edited',
+        ].filter(Boolean)
         Object.assign(registration, next)
+        if (changes.length) audit(user, `${registration.teamName}: ${changes.join(', ')}`, category)
         await save()
         return send(res, 200, adminRegistration(registration))
       }
       if (req.method === 'POST' && parts[3] === 'draw') {
-        if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
+        if (!user) return send(res, 401, { error: 'Organizer login required.' })
         if (category.draw) throw new Error('The draw is already published.')
         category.draw = createDraw(category)
+        audit(user, 'Published the random draw', category, `${category.draw.pools.length} pools, ${category.draw.matches.length} games`)
         await save()
         return send(res, 200, publicCategory(category))
       }
       if (req.method === 'DELETE' && parts[3] === 'draw') {
-        if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
+        if (!user) return send(res, 401, { error: 'Organizer login required.' })
         if (!category.draw) throw new Error('There is no draw to undo.')
         if (category.playoff || hasResults(category)) throw new Error('Scores are already recorded, so the draw can no longer be undone.')
         await backupNow('before-undo-draw')
         category.draw = null
+        audit(user, 'Undid the draw', category)
         await save()
         return send(res, 200, adminCategory(category))
       }
       if (req.method === 'POST' && parts[3] === 'playoff') {
-        if (!authorized(req)) return send(res, 401, { error: 'Organizer login required.' })
+        if (!user) return send(res, 401, { error: 'Organizer login required.' })
         if (category.playoff) throw new Error('Playoff bracket is already published.')
         category.playoff = createPlayoff(category)
+        audit(user, 'Published the playoff bracket', category)
         await save()
         return send(res, 200, publicCategory(category))
       }
@@ -830,10 +1009,14 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
-server.listen(port, '0.0.0.0', () => {
+// On a VPS set HOST=127.0.0.1 so only the HTTPS proxy in front can reach this port.
+server.listen(port, process.env.HOST || '0.0.0.0', () => {
   console.log(`PBB Pickleball API listening on http://127.0.0.1:${port}`)
   console.log(`Player registration links use ${publicBaseUrl}`)
   console.log(`Data: ${dataFile} (backups in ${backupDir})`)
   if (servesSite) console.log(`Serving the built site from ${distDir}`)
-  console.log(process.env.ADMIN_PIN ? 'Organizer PIN: set by ADMIN_PIN' : `Organizer PIN: ${adminPin} (kept in ${pinFile}; set ADMIN_PIN to choose your own)`)
+  const pinNote = process.env.ADMIN_PIN ? 'set by ADMIN_PIN' : `${adminPin} (kept in ${pinFile}; set ADMIN_PIN to choose your own)`
+  console.log(database.users.length
+    ? `Organizer accounts: ${database.users.length}. Setup/recovery PIN: ${pinNote}`
+    : `No organizer accounts yet. Open Organizer and create the owner account with setup PIN: ${pinNote}`)
 })

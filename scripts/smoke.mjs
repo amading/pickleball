@@ -1,5 +1,7 @@
 const base = process.env.SMOKE_URL || 'http://127.0.0.1:8791/api'
 const pin = process.env.SMOKE_PIN || 'test-pin-6742'
+const owner = { username: 'smoke-owner', password: 'smoke-password-1' }
+let token = ''
 // 1x1 transparent PNG: the server checks real image bytes, not just the data URL prefix.
 const photo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 const fakePhoto = `data:image/png;base64,${Buffer.from('not really a png').toString('base64')}`
@@ -7,7 +9,7 @@ const fakePhoto = `data:image/png;base64,${Buffer.from('not really a png').toStr
 async function request(path, method = 'GET', value, admin = false, extraHeaders = {}) {
   const response = await fetch(base + path, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(admin ? { 'x-admin-pin': pin } : {}), ...extraHeaders },
+    headers: { 'Content-Type': 'application/json', ...(admin ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders },
     body: value ? JSON.stringify(value) : undefined,
   })
   const result = await response.json()
@@ -47,6 +49,22 @@ async function scoreFinal(categoryId, match, winnerIndex = 1) {
   return updated
 }
 
+// Accounts: the setup PIN creates the first owner (or we sign in on a reused data file).
+const setupStatus = await request('/admin/status')
+const session = setupStatus.needsSetup
+  ? await request('/admin/setup', 'POST', { pin, name: 'Smoke Owner', ...owner })
+  : await request('/admin/login', 'POST', owner)
+token = session.token
+await expectFail('/admin/login', 'POST', { username: owner.username, password: 'wrong-password' }, 'Wrong username or password')
+const pinOnly = await fetch(`${base}/admin/categories`, { headers: { 'x-admin-pin': pin } })
+if (pinOnly.status !== 401) throw new Error('The setup PIN must not work as a login.')
+const helperName = `helper-${Date.now()}`
+const helper = await request('/admin/users', 'POST', { name: 'Court Helper', username: helperName, password: 'helper-pass-1' }, true)
+const helperSession = await request('/admin/login', 'POST', { username: helperName, password: 'helper-pass-1' })
+await expectFail('/admin/users', 'GET', undefined, 'Only the owner', { Authorization: `Bearer ${helperSession.token}` })
+await request(`/admin/users/${helper.id}`, 'PATCH', { disabled: true }, true)
+await expectFail('/admin/categories', 'GET', undefined, 'Organizer login', { Authorization: `Bearer ${helperSession.token}` })
+
 const category = await request('/categories', 'POST', {
   title: 'Smoke Mixed Doubles',
   division: 'Newbie',
@@ -83,7 +101,7 @@ const unpaid = await request(`/categories/${category.id}/register`, 'POST', {
   teamName: 'Unpaid Team', contact: '0917 111 2222',
   players: [{ name: 'Man X', gender: 'man', photo }, { name: 'Woman X', gender: 'woman', photo }],
 })
-const unpaidResponse = await fetch(`${base}/categories/${category.id}/registrations/${unpaid.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-admin-pin': pin }, body: JSON.stringify({ status: 'approved' }) })
+const unpaidResponse = await fetch(`${base}/categories/${category.id}/registrations/${unpaid.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ status: 'approved' }) })
 if (unpaidResponse.ok) throw new Error('Unpaid entry was approved.')
 await request(`/categories/${category.id}/registrations/${unpaid.id}`, 'PATCH', { status: 'rejected' }, true)
 
@@ -108,7 +126,7 @@ await request(`/categories/${category.id}/draw`, 'POST', undefined, true)
 await request(`/categories/${category.id}/draw`, 'DELETE', undefined, true)
 await request(`/categories/${category.id}/registrations/${firstEntry.id}`, 'PATCH', { teamName: 'Team One Renamed' }, true)
 
-const csv = await fetch(`${base}/categories/${category.id}/export?kind=registrations`, { headers: { 'x-admin-pin': pin } }).then((response) => response.text())
+const csv = await fetch(`${base}/categories/${category.id}/export?kind=registrations`, { headers: { Authorization: `Bearer ${token}` } }).then((response) => response.text())
 if (!csv.includes('Team One Renamed') || !csv.includes('GCASH-1')) throw new Error('Registration CSV is missing data.')
 
 const drawn = await request(`/categories/${category.id}/draw`, 'POST', undefined, true)
@@ -158,9 +176,13 @@ adminCategory = adminCategories.find((item) => item.id === category.id)
 const finalMatch = adminCategory.playoff.rounds.at(-1).matches[0]
 if (!finalMatch.team1 && !finalMatch.team2) throw new Error('Playoff advancement did not fill later bracket slots.')
 
-const results = await fetch(`${base}/categories/${category.id}/export?kind=standings`, { headers: { 'x-admin-pin': pin } }).then((response) => response.text())
+const activity = await request('/admin/activity', 'GET', undefined, true)
+if (!activity.some((item) => item.action === 'Published the random draw' && item.by === 'Smoke Owner')) throw new Error('Activity log is missing the draw.')
+if (!activity.some((item) => item.action === 'Final score' && item.by === 'Court QR')) throw new Error('Activity log is missing QR final scores.')
+
+const results = await fetch(`${base}/categories/${category.id}/export?kind=standings`, { headers: { Authorization: `Bearer ${token}` } }).then((response) => response.text())
 if (!results.includes('Pool A')) throw new Error('Standings CSV is missing data.')
 await request(`/categories/${category.id}`, 'DELETE', undefined, true)
 await expectFail(`/categories/${category.id}`, 'GET', undefined, 'not found')
 
-console.log('Smoke passed: registration, secure draw, QR scoring, standings, qualifiers, playoff advancement, score validation, photo files, payment, contact privacy, 304 caching, edits, undo draw, CSV export, and delete.')
+console.log('Smoke passed: registration, secure draw, QR scoring, standings, qualifiers, playoff advancement, score validation, photo files, payment, contact privacy, 304 caching, edits, undo draw, CSV export, delete, organizer accounts, and activity log.')
