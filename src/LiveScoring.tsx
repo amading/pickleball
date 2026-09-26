@@ -1,6 +1,7 @@
 import { ArrowLeft, CheckCircle2, Minus, Plus, RefreshCw, Trophy } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import './liveScoring.css'
+import { avatarSrc } from './liveTypes'
 
 type Team = { id: string; teamName: string; players: { name: string; photo: string }[] }
 type Match = { id: string; stage: 'pool' | 'playoff'; pool?: string; round?: number; court: string; game?: number; team1: string | null; team2: string | null; score1: number; score2: number; status: 'scheduled' | 'live' | 'final' | 'bye'; winner: string | null; version: number }
@@ -27,7 +28,7 @@ export default function LiveScoring({ scoreKey }: { scoreKey: string }) {
     let active = true
     async function loadMatch() {
       try {
-        const response = await fetch(`/api/categories/${categoryId}/matches/${matchId}`, { cache: 'no-store' })
+        const response = await fetch(`/api/categories/${categoryId}/matches/${matchId}`, { cache: 'no-cache' })
         const value = await response.json().catch(() => null)
         if (!value) throw new Error('The tournament server is not responding. Scores will sync when it is back.')
         if (!response.ok) throw new Error(value.error || 'Match not found.')
@@ -68,9 +69,9 @@ export default function LiveScoring({ scoreKey }: { scoreKey: string }) {
       <div className="score-versus">{([data.team1, data.team2] as const).map((team, index) => {
         const teamScore = index === 0 ? match?.score1 ?? 0 : match?.score2 ?? 0
         return <section className={`score-team-card ${match?.winner === team?.id ? 'winner' : ''} ${leader?.id === team?.id && match?.status !== 'final' ? 'leading' : ''}`} key={index}>
-          <div className="score-team-head"><div className="score-photos">{team?.players.map((player) => <img src={player.photo} alt={player.name} key={player.name} />)}</div><span>TEAM {index + 1}</span></div>
+          <div className="score-team-head"><div className="score-photos">{team?.players.map((player) => <img src={avatarSrc(player.name, player.photo)} alt={player.name} key={player.name} />)}</div><span>TEAM {index + 1}</span></div>
           <h2>{team?.teamName || 'Waiting for opponent'}</h2>
-          <div className="score-player-list">{team?.players.map((player) => <div key={player.name}><img src={player.photo} alt="" /><span>{player.name}</span></div>)}</div>
+          <div className="score-player-list">{team?.players.map((player) => <div key={player.name}><img src={avatarSrc(player.name, player.photo)} alt="" /><span>{player.name}</span></div>)}</div>
           <div className="score-number">{teamScore}</div>
           {match?.winner === team?.id && <div className="score-winner"><Trophy size={16} /> WINNER</div>}
           {canScore && <div className="score-controls"><button type="button" aria-label={`Remove point from ${team?.teamName}`} disabled={busy || teamScore === 0} onClick={() => void save(index === 0 ? Math.max(0, match!.score1 - 1) : match!.score1, index === 1 ? Math.max(0, match!.score2 - 1) : match!.score2, 'live')}><Minus size={20} /></button><button type="button" aria-label={`Add point to ${team?.teamName}`} disabled={busy} onClick={() => void save(index === 0 ? match!.score1 + 1 : match!.score1, index === 1 ? match!.score2 + 1 : match!.score2, 'live')}><Plus size={22} /></button></div>}

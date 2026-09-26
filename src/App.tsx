@@ -55,7 +55,7 @@ function App() {
     let active = true
     async function loadLiveCategories() {
       try {
-        const response = await fetch('/api/categories', { cache: 'no-store' })
+        const response = await fetch('/api/categories', { cache: 'no-cache' })
         const items = await response.json()
         if (!response.ok) throw new Error(items.error || 'Could not load categories.')
         if (!active) return

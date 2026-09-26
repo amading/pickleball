@@ -43,3 +43,45 @@
 @media(max-width:620px){.hub-hero-actions{width:100%}.hub-hero-actions>button{flex:1;justify-content:center}}
 .hub-public-top>a{display:flex;align-items:center}.hub-brand-logo{display:block;width:auto;height:56px;border-radius:10px;box-shadow:0 6px 18px #0000002e}
 @media(max-width:620px){.hub-brand-logo{height:46px}}
+/* Payments, contacts, edits, exports */
+.hub-heading-tools{display:flex;flex-wrap:wrap;gap:4px}
+.hub-create label>small{margin-left:6px;color:#a0793a;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.hub-create select:disabled,.hub-create input:disabled{opacity:.6;cursor:not-allowed}
+.hub-check{display:flex!important;align-items:center;gap:9px;margin-top:15px;color:#37513c;font-size:13px;font-weight:800;cursor:pointer}
+.hub-check input{width:18px;height:18px;accent-color:#2f6b3a}
+.hub-export-row{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:12px;padding:12px 14px;border:1px dashed #cfe0c6;border-radius:12px;background:#fafdf6}
+.hub-export-row>span{margin-right:4px;color:#7d8b79;font-size:10px;font-weight:900;letter-spacing:.1em}
+.hub-export-row button{display:flex;align-items:center;gap:6px;padding:8px 11px;border:1px solid #d3e3ca;border-radius:8px;background:#fff;color:#2e5b31;font-size:12px;font-weight:800;cursor:pointer}
+.hub-export-row button:disabled{opacity:.45;cursor:not-allowed}
+.hub-qualification-control select{min-height:36px;padding:0 8px;border:1px solid #c9e0ba;border-radius:8px;background:#fff;color:#24442c;font-weight:800}
+.hub-undo-button{display:flex;align-items:center;gap:7px;padding:11px 14px;border:1px solid #efd6a8;border-radius:9px;background:#fff8ea;color:#8a5a14;font-size:12px;font-weight:900;cursor:pointer}
+.hub-entry-filters{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.hub-entry-filters button{padding:8px 12px;border:1px solid #dae5d6;border-radius:20px;background:#fff;color:#5c705e;font-size:12px;font-weight:800;cursor:pointer}
+.hub-entry-filters button.active{border-color:#1c3828;background:#1c3828;color:#fff}
+.hub-entry-filters span{margin-left:3px;opacity:.7}
+.hub-entry{flex-wrap:wrap}
+.hub-entry-meta{display:flex;flex-wrap:wrap;gap:4px}
+.hub-entry-meta a{display:inline-flex;align-items:center;gap:3px;color:#2f6b3a;font-weight:800;text-decoration:none}
+.hub-paid{font-family:inherit;padding:7px 10px;border:1px dashed #e0b77a;border-radius:20px;background:#fffaf0;color:#a16b1d;font-size:10px;font-weight:900;letter-spacing:.06em;cursor:pointer}
+.hub-paid.paid{border:1px solid #9fd67e;background:#e2f5d7;color:#2f6b30}
+.hub-paid:disabled{opacity:.45;cursor:not-allowed}
+.hub-entry-actions button{cursor:pointer}
+.hub-entry-actions button:disabled{opacity:.35;cursor:not-allowed}
+.hub-entry-actions .edit{background:#eef2ec;color:#4a5f4d}
+.hub-entry-edit{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;flex-basis:100%;padding:12px;margin-top:4px;border-radius:10px;background:#f6f9f2}
+.hub-entry-edit label{display:flex;flex-direction:column;gap:4px;color:#5c705e;font-size:11px;font-weight:800}
+.hub-entry-edit input{min-height:38px;padding:0 10px;border:1px solid #d3e0cd;border-radius:8px;font:inherit;font-size:13px}
+.hub-entry-edit>div{display:flex;align-items:flex-end;gap:8px}
+.hub-entry-edit button{min-height:38px;padding:0 14px;border:0;border-radius:8px;background:#1c3828;color:#fff;font-weight:900;cursor:pointer}
+.hub-entry-edit button.secondary{background:#e5ece1;color:#37513c}
+.hub-contact-grid{margin-top:16px}
+.hub-contact-grid small{display:block;margin-top:5px;color:#8a998a;font-size:11px;font-weight:600}
+.hub-contact-grid em{color:#8a998a;font-style:normal;font-weight:600}
+.hub-payment-line{padding:11px 13px;border:1px solid #efd6a8;border-radius:10px;background:#fff8ea;color:#8a5a14!important}
+.hub-payment-line.paid{border-color:#c5e1a5;background:#eef9e3;color:#3a793b!important}
+@media(max-width:620px){
+  .hub-entry-info{flex-basis:calc(100% - 80px)}
+  .hub-entry>.hub-paid{margin-left:auto}
+  .hub-export-row button{flex:1 1 45%;justify-content:center}
+  .hub-heading-tools{width:100%;justify-content:space-between}
+}
