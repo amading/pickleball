@@ -107,3 +107,26 @@
 .hub-activity time{color:#8a998a}
 .hub-activity span{overflow-wrap:anywhere;color:#3b4a3e}
 @media(max-width:620px){.hub-admin-login{margin:24px auto;padding:28px 20px}.hub-admin-login h2{font-size:32px}.hub-activity li{grid-template-columns:1fr;gap:2px}}
+/* Team codes, private boards, end of event */
+.hub-summary-actions button.hub-end{border-color:#efd6a8;background:#fff8ea;color:#8a5a14;cursor:pointer}
+.hub-private-pill,.hub-ended-pill{display:inline-flex;align-items:center;gap:5px;width:max-content;margin-top:10px;padding:5px 9px;border-radius:20px;background:#e8f1e3;color:#35613a;font-size:10px;font-weight:900;letter-spacing:.06em}
+.hub-ended-pill{background:#f3ece0;color:#8a5a14}
+.hub-code-row{display:flex;flex-wrap:wrap;align-items:center;gap:7px;flex-basis:100%;padding:8px 10px;margin-left:52px;border-radius:9px;background:#f6f9f2}
+.hub-code{display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border-radius:7px;background:#1c3828;color:#d8ff5b;font-family:'Space Grotesk',ui-monospace,monospace;font-size:14px;font-weight:800;letter-spacing:.08em}
+.hub-code-row small{color:#758574;font-size:11px}
+.hub-code-row a,.hub-code-row button{display:inline-flex;align-items:center;gap:5px;padding:6px 9px;border:1px solid #d3e3ca;border-radius:7px;background:#fff;color:#2e5b31;font-size:11px;font-weight:800;text-decoration:none;cursor:pointer}
+.hub-team-code{display:flex;flex-direction:column;gap:6px;padding:20px;margin:16px 0;border:1px solid #1c3828;border-radius:12px;background:#1c3828;color:#fff}
+.hub-team-code span{color:#a9c7ab;font-size:11px;font-weight:900;letter-spacing:.12em}
+.hub-team-code strong{color:#d8ff5b;font-family:'Space Grotesk',ui-monospace,monospace;font-size:40px;letter-spacing:.12em;user-select:all}
+.hub-team-code p{margin:0;color:#c5d6c6!important;font-size:12px}
+.hub-viewer-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;max-width:750px;margin:18px auto;padding:12px 15px;border:1px solid #c5e1a5;border-radius:12px;background:#eef9e3;color:#35613a;font-size:13px}
+.hub-viewer-bar button{margin-left:auto;padding:7px 10px;border:1px solid #c5d9b8;border-radius:8px;background:#fff;color:#35613a;font-size:12px;font-weight:800;cursor:pointer}
+.hub-unlock{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:center;max-width:750px;padding:24px;margin:23px auto;border:1px solid var(--hub-line);border-radius:17px;background:#fff;box-shadow:0 9px 35px #19341a09}
+.hub-unlock .hub-login-icon{margin:0}
+.hub-unlock h3{margin:0;font-family:'Space Grotesk',sans-serif;font-size:22px;letter-spacing:-.03em}
+.hub-unlock p{margin:6px 0 0;color:#768776;font-size:13px;line-height:1.5}
+.hub-unlock form{display:flex;gap:8px;grid-column:1/-1}
+.hub-unlock input{flex:1;min-width:0;padding:14px 16px;border:1px solid #d4decf;border-radius:10px;background:#f8faf4;font-family:'Space Grotesk',ui-monospace,monospace;font-size:20px;font-weight:800;letter-spacing:.15em;text-transform:uppercase}
+.hub-unlock button{display:flex;align-items:center;gap:8px;padding:0 20px;border:0;border-radius:10px;background:#bbee5d;color:#1c321d;font-weight:900;cursor:pointer}
+.hub-unlock .hub-error{grid-column:1/-1;margin:0}
+@media(max-width:620px){.hub-code-row{margin-left:0}.hub-unlock{grid-template-columns:1fr;padding:20px}.hub-team-code strong{font-size:34px}}

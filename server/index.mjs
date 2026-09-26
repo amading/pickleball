@@ -281,7 +281,44 @@ function teamView(registration) {
 }
 
 function adminRegistration(registration) {
-  return { ...registration, players: registration.players.map((player) => ({ name: player.name, gender: player.gender, photo: photoUrl(player.photoId) })) }
+  const { devices, ...rest } = registration
+  return { ...rest, devicesUsed: devices?.length ?? 0, players: registration.players.map((player) => ({ name: player.name, gender: player.gender, photo: photoUrl(player.photoId) })) }
+}
+
+// Team codes: easy to read aloud or text, no look-alike characters (0/O, 1/I/L).
+const codeAlphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+
+function newAccessCode() {
+  const taken = new Set(database.categories.flatMap((item) => item.registrations.map((entry) => entry.accessCode)))
+  for (;;) {
+    const raw = Array.from({ length: 6 }, () => codeAlphabet[randomInt(codeAlphabet.length)]).join('')
+    const code = `${raw.slice(0, 3)}-${raw.slice(3)}`
+    if (!taken.has(code)) return code
+  }
+}
+
+function normalizeCode(value) {
+  const raw = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  return raw.length === 6 ? `${raw.slice(0, 3)}-${raw.slice(3)}` : ''
+}
+
+/** Phones a team code may unlock: one per player (2 for doubles, 1 for singles). */
+function deviceLimit(registration) {
+  return Math.max(1, registration.players.length)
+}
+
+/** The approved team whose player token is on this request, for a still-running event; otherwise null. */
+function playerFor(req, category) {
+  if (category.endedAt) return null
+  const tokens = String(req.headers['x-player-token'] || '').split(',').map((item) => item.trim()).filter(Boolean).slice(0, 20)
+  if (!tokens.length) return null
+  const hashes = new Set(tokens.map(tokenHash))
+  return category.registrations.find((entry) => entry.status === 'approved' && entry.devices?.some((device) => hashes.has(device.tokenHash))) ?? null
+}
+
+/** Organizers always see the board; on a private board, players need an unlocked team code. */
+function canSeeBoard(req, category, user) {
+  return Boolean(user) || !category.privateBoard || Boolean(playerFor(req, category))
 }
 
 function publicMatch(match) {
@@ -354,14 +391,21 @@ function categorySettings(category) {
     courts: category.courts, rules: category.rules, published: category.published,
     pointsToWin: category.pointsToWin ?? 11, winBy: category.winBy ?? 2,
     winsToQualify: category.winsToQualify ?? 3, qualifyMode: category.qualifyMode ?? 'wins', qualifyTop: category.qualifyTop ?? 2,
-    requirePayment: Boolean(category.requirePayment),
+    requirePayment: Boolean(category.requirePayment), privateBoard: Boolean(category.privateBoard),
+    ended: Boolean(category.endedAt), endedAt: category.endedAt ?? null,
   }
 }
 
-function publicCategory(category) {
-  return {
+function publicCategory(category, canSee = true) {
+  const summary = {
     ...categorySettings(category),
     approvedCount: category.registrations.filter((item) => item.status === 'approved').length,
+  }
+  // A private board hides teams, games, and results from anyone without a team code.
+  if (!canSee) return { ...summary, locked: true, drawPublished: Boolean(category.draw), draw: null, standings: [], qualified: [], playoff: null }
+  return {
+    ...summary,
+    locked: false,
     draw: category.draw ? { pools: drawPools(category), matches: category.draw.matches.map(publicMatch), publishedAt: category.draw.publishedAt } : null,
     standings: standings(category), qualified: qualifiedTeams(category),
     playoff: category.playoff ? { publishedAt: category.playoff.publishedAt, seeded: Boolean(category.playoff.seeded), rounds: category.playoff.rounds.map((round) => ({ name: round.name, matches: round.matches.map(publicMatch) })) } : null,
@@ -573,15 +617,16 @@ async function beforeMigration() {
 }
 const photoCache = new Map()
 for (const category of database.categories) {
-  for (const [key, value] of [['pointsToWin', 11], ['winBy', 2], ['qualifyMode', 'wins'], ['qualifyTop', 2], ['requirePayment', false]]) {
+  for (const [key, value] of [['pointsToWin', 11], ['winBy', 2], ['qualifyMode', 'wins'], ['qualifyTop', 2], ['requirePayment', false], ['privateBoard', true], ['endedAt', null]]) {
     if (category[key] === undefined) { category[key] = value; migrated = true }
   }
   if (!category.winsToQualify) { category.winsToQualify = Math.min(3, category.poolSize - 1); migrated = true }
   if (category.playoff === undefined) { category.playoff = null; migrated = true }
   for (const registration of category.registrations) {
-    for (const [key, value] of [['paid', false], ['paymentRef', ''], ['contact', '']]) {
+    for (const [key, value] of [['paid', false], ['paymentRef', ''], ['contact', ''], ['devices', []]]) {
       if (registration[key] === undefined) { registration[key] = value; migrated = true }
     }
+    if (!registration.accessCode) { registration.accessCode = newAccessCode(); migrated = true }
     for (const player of registration.players) {
       if (typeof player.photo === 'string' && player.photo.startsWith('data:')) {
         await beforeMigration()
@@ -646,6 +691,7 @@ function applySettings(category, input, creating) {
     category.fee = fee
   }
   if (has('requirePayment')) category.requirePayment = Boolean(input.requirePayment)
+  if (has('privateBoard')) category.privateBoard = Boolean(input.privateBoard)
   if (has('format') || has('eligibility')) {
     if (!creating && category.registrations.length && (input.format !== category.format || input.eligibility !== category.eligibility)) locked('Team format and eligibility')
     const format = ['doubles', 'mixed-doubles', 'singles'].includes(input.format) ? input.format : null
@@ -793,7 +839,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 404, { error: 'Organizer not found.' })
     }
     if (req.method === 'GET' && url.pathname === '/api/categories') {
-      return send(res, 200, database.categories.filter((item) => item.published).map(publicCategory))
+      return send(res, 200, database.categories.filter((item) => item.published).map((item) => publicCategory(item, canSeeBoard(req, item, user))))
     }
     if (req.method === 'GET' && url.pathname === '/api/admin/categories') {
       if (!user) return send(res, 401, { error: 'Organizer login required.' })
@@ -809,7 +855,7 @@ const server = http.createServer(async (req, res) => {
       const input = await body(req)
       const category = {
         id: randomUUID(), title: '', division: '', format: 'doubles', eligibility: 'genderless', fee: 0, capacity: 2, poolSize: 2, courts: 1,
-        pointsToWin: 11, winBy: 2, winsToQualify: 1, qualifyMode: 'top', qualifyTop: 2, requirePayment: false, rules: '',
+        pointsToWin: 11, winBy: 2, winsToQualify: 1, qualifyMode: 'top', qualifyTop: 2, requirePayment: false, privateBoard: true, endedAt: null, rules: '',
         published: true, createdAt: new Date().toISOString(), registrations: [], draw: null, playoff: null,
       }
       applySettings(category, {
@@ -830,7 +876,8 @@ const server = http.createServer(async (req, res) => {
       if (!category) return send(res, 404, { error: 'Category not found.' })
       if (req.method === 'GET' && parts.length === 3) {
         if (!category.published) return send(res, 404, { error: 'Category not found.' })
-        return send(res, 200, publicCategory(category))
+        const player = playerFor(req, category)
+        return send(res, 200, { ...publicCategory(category, canSeeBoard(req, category, user)), viewer: player ? { teamId: player.id, teamName: player.teamName } : null })
       }
       if (req.method === 'PATCH' && parts.length === 3) {
         if (!user) return send(res, 401, { error: 'Organizer login required.' })
@@ -862,6 +909,7 @@ const server = http.createServer(async (req, res) => {
         const match = allMatches(category).find((item) => item.id === parts[4])
         if (!match) return send(res, 404, { error: 'Match not found.' })
         const teamById = new Map(category.registrations.map((item) => [item.id, teamView(item)]))
+        if (req.method === 'GET' && parts.length === 5 && !canSeeBoard(req, category, user) && !sameSecret(req.headers['x-score-token'], match.scoreToken)) return send(res, 403, { error: 'This board is private. Enter your team code on the category page.' })
         if (req.method === 'GET' && parts.length === 5) return send(res, 200, {
           categoryId: category.id, categoryTitle: category.title, pointsToWin: category.pointsToWin ?? 11,
           winBy: category.winBy ?? 2, match: publicMatch(match),
@@ -901,7 +949,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if (req.method === 'POST' && parts[3] === 'register') {
-        if (!category.published || category.draw) throw new Error('Registration is closed for this category.')
+        if (!category.published || category.draw || category.endedAt) throw new Error('Registration is closed for this category.')
         if (activeEntries(category) >= category.capacity) throw new Error('This category is full.')
         const input = await body(req)
         const players = Array.isArray(input.players) ? input.players : []
@@ -924,7 +972,7 @@ const server = http.createServer(async (req, res) => {
         if (category.registrations.some((item) => item.status !== 'rejected' && item.teamName.toLowerCase() === teamName.toLowerCase())) throw new Error('That team name is already registered in this category.')
         const stored = []
         for (const player of cleaned) stored.push({ name: player.name, gender: player.gender, photoId: await storePhoto(player.photo) })
-        const registration = { id: randomUUID(), teamName, players: stored, contact, paymentRef, paid: false, status: 'pending', createdAt: new Date().toISOString() }
+        const registration = { id: randomUUID(), teamName, players: stored, contact, paymentRef, paid: false, status: 'pending', accessCode: newAccessCode(), devices: [], createdAt: new Date().toISOString() }
         category.registrations.push(registration)
         await save()
         return send(res, 201, { id: registration.id, status: registration.status, teamName: registration.teamName })
@@ -936,9 +984,61 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, {
           id: registration.id, teamName: registration.teamName, status: registration.status,
           paid: Boolean(registration.paid), requirePayment: Boolean(category.requirePayment),
+          // The team code is revealed on the team's own entry page once approved, until the event ends.
+          accessCode: registration.status === 'approved' && !category.endedAt ? registration.accessCode : null,
+          devicesUsed: registration.devices?.length ?? 0, deviceLimit: deviceLimit(registration), ended: Boolean(category.endedAt),
           pool: assignment?.name ?? null, court: assignment?.court ?? null,
           matches: category.draw?.matches.filter((match) => match.team1 === registration.id || match.team2 === registration.id).map(publicMatch) ?? [],
         })
+      }
+      if (req.method === 'POST' && parts[3] === 'access' && parts.length === 4) {
+        const input = await body(req)
+        if (loginLocked(req)) throw lockedError()
+        if (category.endedAt) throw new Error('This event has ended, so team codes no longer work.')
+        const code = normalizeCode(input.code)
+        const entry = code ? category.registrations.find((item) => item.accessCode === code) : null
+        if (!entry) { noteFailure(req); throw new Error('That code does not match a team in this category.') }
+        failedLogins.delete(clientKey(req))
+        if (entry.status !== 'approved') throw new Error('Your team is not approved yet. The code works once the organizer approves your entry.')
+        if (entry.devices.length >= deviceLimit(entry)) throw new Error(`This code is already in use on ${deviceLimit(entry)} phone${deviceLimit(entry) === 1 ? '' : 's'}. Sign out on another phone, or ask the organizer to reset the code.`)
+        const token = randomBytes(32).toString('base64url')
+        entry.devices.push({ tokenHash: tokenHash(token), at: new Date().toISOString() })
+        audit(null, `${entry.teamName}: team code used on a phone (${entry.devices.length}/${deviceLimit(entry)})`, category)
+        await save()
+        return send(res, 200, { token, teamId: entry.id, teamName: entry.teamName })
+      }
+      if (req.method === 'DELETE' && parts[3] === 'access' && parts.length === 4) {
+        const hash = tokenHash(String(req.headers['x-player-token'] || '').split(',')[0].trim())
+        for (const entry of category.registrations) entry.devices = (entry.devices ?? []).filter((device) => device.tokenHash !== hash)
+        await save()
+        return send(res, 200, { ok: true })
+      }
+      if (req.method === 'POST' && parts[3] === 'registrations' && parts[4] && parts[5] === 'reset-code') {
+        if (!user) return send(res, 401, { error: 'Organizer login required.' })
+        const entry = category.registrations.find((item) => item.id === parts[4])
+        if (!entry) return send(res, 404, { error: 'Registration not found.' })
+        entry.accessCode = newAccessCode()
+        entry.devices = []
+        audit(user, `${entry.teamName}: reset team code (all phones signed out)`, category)
+        await save()
+        return send(res, 200, adminRegistration(entry))
+      }
+      if (req.method === 'POST' && parts[3] === 'end' && parts.length === 4) {
+        if (!user) return send(res, 401, { error: 'Organizer login required.' })
+        const input = await body(req)
+        if (input.ended === false) {
+          category.endedAt = null
+          audit(user, 'Reopened the event', category)
+        } else {
+          if (category.endedAt) throw new Error('This event has already ended.')
+          await backupNow('before-end-event')
+          category.endedAt = new Date().toISOString()
+          // Every team code stops working; phones that were signed in lose access on their next refresh.
+          for (const entry of category.registrations) entry.devices = []
+          audit(user, 'Ended the event (team codes expired)', category)
+        }
+        await save()
+        return send(res, 200, adminCategory(category))
       }
       if (req.method === 'PATCH' && parts[3] === 'registrations' && parts[4]) {
         if (!user) return send(res, 401, { error: 'Organizer login required.' })

@@ -44,6 +44,16 @@ Score QR links are only shown in organizer views. Public category and player pag
 
 Categories, registrations, and draws are saved outside the web folder at `~/.rally-hq/data.json` (or `DATA_FILE` if configured). Player photos are separate files in `photos/` beside it and are served with long-lived caching; pages poll with ETags, so an unchanged board costs phones almost no data. Automatic backups go to `backups/` every 30 minutes of activity and always before a category delete, a draw undo, or a data upgrade (the newest 48 are kept; tune with `BACKUP_MINUTES` and `BACKUPS_KEPT`). To restore, stop the server and copy a backup over `data.json`. The phone link uses the computer's detected LAN address; set `PUBLIC_BASE_URL` if the detected address is unsuitable. Phones must be able to reach the host computer and its Vite port. Photos are checked by their actual file bytes (JPG, PNG, or WebP only). This is a local-network implementation by default.
 
+### Team codes and private boards
+
+Categories have a **private board** by default (toggle it in **Edit settings**). Without a code, the category page shows only the category details and the registration form; pools, games, scores, standings, and the bracket stay hidden, on the player page and on the Dashboard, Live board, and Schedule alike. Signed-in organizers always see everything, and a court QR still opens its own scoreboard.
+
+- Every team gets a code such as `K7Q-4M2`. It appears on the team's entry page once the team is approved, and the phone that registered unlocks itself automatically.
+- On the roster, each approved team shows its code, how many phones use it, **Text code** (opens the SMS app with a ready message to the team's contact number), **Copy message** (for Messenger or Viber), and **Reset code** (new code, all its phones signed out).
+- A code works on one phone per player: 2 for doubles, 1 for singles. A player can free a slot with **Sign out this phone**.
+- **End event** on the category expires every code immediately and closes registration. **Reopen event** makes codes work again; teams re-enter them.
+- Wrong codes count toward the same lockout as wrong passwords.
+
 ### Organizer accounts
 
 Each organizer has their own username and password (8+ characters, stored as scrypt hashes). Sessions last 14 days on that device or until **Sign out**. Click your name on the organizer desk for **Team & security**:

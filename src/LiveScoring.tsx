@@ -30,7 +30,7 @@ export default function LiveScoring({ scoreKey }: { scoreKey: string }) {
     let active = true
     async function loadMatch() {
       try {
-        const response = await fetch(`/api/categories/${categoryId}/matches/${matchId}`, { cache: 'no-cache' })
+        const response = await fetch(`/api/categories/${categoryId}/matches/${matchId}`, { cache: 'no-cache', headers: { 'x-score-token': token, ...authHeaders(adminToken) } })
         const value = await response.json().catch(() => null)
         if (!value) throw new Error('The tournament server is not responding. Scores will sync when it is back.')
         if (!response.ok) throw new Error(value.error || 'Match not found.')
@@ -40,7 +40,7 @@ export default function LiveScoring({ scoreKey }: { scoreKey: string }) {
     void loadMatch()
     const timer = window.setInterval(() => { if (!busy) void loadMatch() }, 2500)
     return () => { active = false; window.clearInterval(timer) }
-  }, [categoryId, matchId, invalidScoreKey, busy, refreshIndex])
+  }, [categoryId, matchId, token, adminToken, invalidScoreKey, busy, refreshIndex])
 
   async function save(score1: number, score2: number, status: 'live' | 'final') {
     if (!data || busy) return

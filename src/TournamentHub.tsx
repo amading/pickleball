@@ -1,15 +1,15 @@
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Copy, Download, ImagePlus, LogOut, Pencil, Phone, Plus, RefreshCw, Settings2, Shuffle, Sparkles, Trash2, Undo2, UserCog, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Copy, Download, Flag, ImagePlus, KeyRound, LockKeyhole, LogOut, MessageSquare, Pencil, Phone, Plus, RefreshCw, RotateCcw, Settings2, Shuffle, Sparkles, Trash2, Undo2, UserCog, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import './tournamentHub.css'
 import LiveDrawBoard from './LiveDrawBoard'
-import { api, download, readToken, storeToken, type AdminUser } from './adminApi'
+import { api, download, playerHeaders, playerToken, readToken, storePlayerToken, storeToken, type AdminUser } from './adminApi'
 import { AccountPanel, LoginGate } from './OrganizerAccess'
 import { avatarSrc, qualifyRule } from './liveTypes'
 
 type Player = { name: string; gender: 'man' | 'woman' | 'other'; photo: string }
 type Registration = {
   id: string; teamName: string; players: Player[]; status: 'pending' | 'approved' | 'rejected'; createdAt: string
-  contact?: string; paymentRef?: string; paid?: boolean
+  contact?: string; paymentRef?: string; paid?: boolean; accessCode?: string; devicesUsed?: number
 }
 type DrawTeam = { id: string; teamName: string; players: Player[] }
 type Pool = { name: string; court: string; teams: DrawTeam[] }
@@ -20,33 +20,52 @@ type Category = {
   eligibility: 'open' | 'men' | 'women' | 'genderless'; fee: number; capacity: number
   poolSize: number; courts: number; rules: string; published: boolean; approvedCount: number
   pointsToWin: number; winBy: number; winsToQualify: number; qualifyMode: QualifyMode; qualifyTop: number; requirePayment: boolean
+  privateBoard: boolean; ended: boolean; locked?: boolean; drawPublished?: boolean; viewer?: { teamId: string; teamName: string } | null
   registrations?: Registration[]; draw: { pools: Pool[]; matches: DrawMatch[]; publishedAt: string } | null
   standings?: { name: string; teams: { id: string; teamName: string; wins: number; losses: number; pointsFor: number; pointsAgainst: number; rank?: number }[] }[]
   qualified?: { id: string; teamName: string; wins: number; pool: string }[]
   playoff?: { rounds: { name: string; matches: DrawMatch[] }[]; publishedAt: string } | null
 }
-type EntryStatus = { id: string; teamName: string; status: Registration['status']; paid?: boolean; requirePayment?: boolean; pool: string | null; court: string | null; matches: DrawMatch[] }
+type EntryStatus = {
+  id: string; teamName: string; status: Registration['status']; paid?: boolean; requirePayment?: boolean
+  accessCode?: string | null; devicesUsed?: number; deviceLimit?: number; ended?: boolean
+  pool: string | null; court: string | null; matches: DrawMatch[]
+}
 type Settings = {
-  title: string; division: string; format: Category['format']; eligibility: Category['eligibility']; fee: number; requirePayment: boolean
+  title: string; division: string; format: Category['format']; eligibility: Category['eligibility']; fee: number; requirePayment: boolean; privateBoard: boolean
   capacity: number; poolSize: number; courts: number; pointsToWin: number; winBy: number
   qualifyMode: QualifyMode; qualifyTop: number; winsToQualify: number; rules: string
 }
 
 const emptyPlayer = (): Player => ({ name: '', gender: 'other', photo: '' })
 const newCategory: Settings = {
-  title: '', division: 'Newbie', format: 'doubles', eligibility: 'genderless', fee: 700, requirePayment: true,
+  title: '', division: 'Newbie', format: 'doubles', eligibility: 'genderless', fee: 700, requirePayment: true, privateBoard: true,
   capacity: 20, poolSize: 5, courts: 3, pointsToWin: 11, winBy: 2, qualifyMode: 'top', qualifyTop: 2, winsToQualify: 3,
   rules: 'Round robin within each pool. Each team plays every other team in its pool once. Top teams advance to a seeded playoff bracket.',
 }
 const contactPattern = /^[+0-9 ()-]{7,20}$/
+
+function codeMessage(category: Category, entry: Registration, base: string) {
+  return `PBB Pickleball: ${entry.teamName} is approved for ${category.title}! Your team code: ${entry.accessCode}. Open ${registrationUrl(category.id, base)} and enter the code to see your games. Works on ${entry.players.length === 1 ? '1 phone' : `up to ${entry.players.length} phones`}; please share it only with your partner.`
+}
+
+/** Trades a team code for this phone's access token and remembers it. */
+async function unlockBoard(categoryId: string, code: string) {
+  const result = await api<{ token: string }>(`/categories/${categoryId}/access`, { method: 'POST', body: JSON.stringify({ code }) })
+  storePlayerToken(categoryId, result.token)
+}
+
+function smsLink(number: string, message: string) {
+  return `sms:${number.replace(/[^+0-9]/g, '')}?&body=${encodeURIComponent(message)}`
+}
 
 function labelFormat(value: Category['format']) { return value === 'mixed-doubles' ? 'Mixed doubles' : value === 'doubles' ? 'Doubles' : 'Singles' }
 function labelEligibility(value: Category['eligibility']) { return value === 'genderless' ? 'Genderless' : value === 'open' ? 'Open' : value === 'men' ? 'Men' : 'Women' }
 function registrationUrl(id: string, base = window.location.origin) { return `${base}${window.location.pathname}?register=${encodeURIComponent(id)}` }
 function hasResults(category: Category) { return [...(category.draw?.matches ?? []), ...(category.playoff?.rounds.flatMap((round) => round.matches) ?? [])].some((match) => match.status === 'live' || match.status === 'final') }
 function settingsOf(category: Category): Settings {
-  const { title, division, format, eligibility, fee, requirePayment, capacity, poolSize, courts, pointsToWin, winBy, qualifyMode, qualifyTop, winsToQualify, rules } = category
-  return { title, division, format, eligibility, fee, requirePayment, capacity, poolSize, courts, pointsToWin, winBy, qualifyMode, qualifyTop, winsToQualify, rules }
+  const { title, division, format, eligibility, fee, requirePayment, privateBoard, capacity, poolSize, courts, pointsToWin, winBy, qualifyMode, qualifyTop, winsToQualify, rules } = category
+  return { title, division, format, eligibility, fee, requirePayment, privateBoard, capacity, poolSize, courts, pointsToWin, winBy, qualifyMode, qualifyTop, winsToQualify, rules }
 }
 
 function CategoryForm({ initial, editing, busy, onSubmit, onClose }: {
@@ -81,6 +100,7 @@ function CategoryForm({ initial, editing, busy, onSubmit, onClose }: {
         <label>Courts {lockNote(drawLocked, 'locked: draw published')}<input type="number" min="1" max="20" disabled={drawLocked} value={draft.courts} onChange={(event) => set({ courts: Number(event.target.value) })} required /></label>
       </div>
       <label className="hub-check"><input type="checkbox" checked={draft.requirePayment} onChange={(event) => set({ requirePayment: event.target.checked })} /> Require payment before a team can be approved</label>
+      <label className="hub-check"><input type="checkbox" checked={draft.privateBoard} onChange={(event) => set({ privateBoard: event.target.checked })} /> Private board: only approved teams with their team code (and organizers) can see games and results</label>
       <div className="hub-form-grid hub-scoring-options">
         <label>Points to win {lockNote(scoringLocked, 'locked: scores recorded')}<input type="number" min="1" max="99" disabled={scoringLocked} value={draft.pointsToWin} onChange={(event) => set({ pointsToWin: Number(event.target.value) })} required /></label>
         <label>Win by<input type="number" min="1" max="5" disabled={scoringLocked} value={draft.winBy} onChange={(event) => set({ winBy: Number(event.target.value) })} required /></label>
@@ -209,6 +229,25 @@ export function OrganizerHub() {
     void run(() => api(`/categories/${selected.id}`, { method: 'PATCH', body: JSON.stringify(patch) }, token), '')
   }
 
+  function endEvent(ended: boolean) {
+    if (!selected) return
+    const text = ended
+      ? `End "${selected.title}"? Every team code stops working right away and registration closes. You can reopen it later, but teams will need to enter their code again.`
+      : `Reopen "${selected.title}"? Team codes work again (teams re-enter them on their phones).`
+    if (!window.confirm(text)) return
+    void run(() => api(`/categories/${selected.id}/end`, { method: 'POST', body: JSON.stringify({ ended }) }, token), ended ? 'Event ended. All team codes have expired.' : 'Event reopened.')
+  }
+
+  function resetCode(entry: Registration) {
+    if (!selected || !window.confirm(`Give ${entry.teamName} a new team code? The old code stops working and their phones are signed out.`)) return
+    void run(() => api(`/categories/${selected.id}/registrations/${entry.id}/reset-code`, { method: 'POST' }, token), `New code for ${entry.teamName}. Send it to them again.`)
+  }
+
+  async function copyText(text: string, success: string) {
+    try { await navigator.clipboard.writeText(text); setNotice(success) }
+    catch { setNotice(text) }
+  }
+
   function undoDraw() {
     if (!selected || !window.confirm('Undo the draw? Pools and matches are removed so you can change entries and draw again. Players will see registration reopen.')) return
     void run(() => api(`/categories/${selected.id}/draw`, { method: 'DELETE' }, token), 'Draw undone. Entries are editable again.')
@@ -243,11 +282,12 @@ export function OrganizerHub() {
       <div className="hub-category-tabs">{categories.map((category) => <button type="button" className={category.id === selected?.id ? 'active' : ''} key={category.id} onClick={() => { setSelectedId(category.id); setForm((current) => current === 'edit' ? null : current); setEditingEntry('') }}>{category.title}<small>{category.registrations?.length ?? 0} entries</small></button>)}</div>
       {selected && <>
         <div className="hub-category-summary">
-          <div><span className="hub-eyebrow">{selected.division.toUpperCase()} · {labelFormat(selected.format).toUpperCase()}</span><h2>{selected.title}</h2><p>{labelEligibility(selected.eligibility)} · ₱{selected.fee.toLocaleString()} / player{selected.requirePayment ? ' (payment required)' : ''} · {selected.capacity} team slots · {selected.poolSize} teams/pool · {selected.courts} courts · First to {selected.pointsToWin}, win by {selected.winBy} · {qualifyRule(selected)} to playoffs</p><small className="hub-share-address">Phone link: {registrationUrl(selected.id, publicBase)}</small></div>
+          <div><span className="hub-eyebrow">{selected.division.toUpperCase()} · {labelFormat(selected.format).toUpperCase()}</span><h2>{selected.title}</h2><p>{labelEligibility(selected.eligibility)} · ₱{selected.fee.toLocaleString()} / player{selected.requirePayment ? ' (payment required)' : ''} · {selected.capacity} team slots · {selected.poolSize} teams/pool · {selected.courts} courts · First to {selected.pointsToWin}, win by {selected.winBy} · {qualifyRule(selected)} to playoffs</p><small className="hub-share-address">Phone link: {registrationUrl(selected.id, publicBase)}</small>{selected.ended ? <span className="hub-ended-pill">EVENT ENDED · TEAM CODES EXPIRED</span> : selected.privateBoard && <span className="hub-private-pill"><LockKeyhole size={11} /> PRIVATE BOARD · TEAM CODE REQUIRED</span>}</div>
           <div className="hub-summary-actions">
             <button type="button" onClick={() => void copyLink(selected.id)}><Copy size={16} /> Copy registration link</button>
             <a href={registrationUrl(selected.id)} target="_blank" rel="noreferrer">Preview player page <ArrowRight size={16} /></a>
             <button type="button" onClick={() => { setForm('edit'); setError('') }}><Settings2 size={16} /> Edit settings</button>
+            <button type="button" className={selected.ended ? '' : 'hub-end'} disabled={busy} onClick={() => endEvent(!selected.ended)}>{selected.ended ? <><RotateCcw size={16} /> Reopen event</> : <><Flag size={16} /> End event</>}</button>
             <button type="button" className="hub-delete" disabled={busy} onClick={deleteCategory}><Trash2 size={16} /> Delete</button>
           </div>
         </div>
@@ -301,6 +341,15 @@ export function OrganizerHub() {
               </>}
               <button type="button" className="edit" onClick={() => setEditingEntry(editingEntry === entry.id ? '' : entry.id)} title="Edit names and contact"><Pencil size={15} /></button>
             </div>
+            {entry.status === 'approved' && entry.accessCode && <div className="hub-code-row">
+              <span className="hub-code"><KeyRound size={13} /> {entry.accessCode}</span>
+              <small>{selected.ended ? 'expired (event ended)' : `${entry.devicesUsed ?? 0}/${entry.players.length} phone${entry.players.length === 1 ? '' : 's'} using it`}</small>
+              {!selected.ended && <>
+                {entry.contact && <a href={smsLink(entry.contact, codeMessage(selected, entry, publicBase))}><MessageSquare size={13} /> Text code</a>}
+                <button type="button" onClick={() => void copyText(codeMessage(selected, entry, publicBase), `Message for ${entry.teamName} copied. Paste it in SMS or Messenger.`)}><Copy size={13} /> Copy message</button>
+                <button type="button" disabled={busy} onClick={() => resetCode(entry)}><RotateCcw size={13} /> Reset code</button>
+              </>}
+            </div>}
             {editingEntry === entry.id && <EntryEditor entry={entry} busy={busy} onCancel={() => setEditingEntry('')} onSave={(patch) => patchEntry(entry, patch, `${entry.teamName} updated.`)} />}
           </article>
         }) : <div className="hub-empty">{entries.length ? 'No entries match this filter.' : 'No player registrations yet. Share the category link to start collecting teams.'}</div>}</div>
@@ -338,6 +387,10 @@ export function RegistrationPortal({ categoryId }: { categoryId: string }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [code, setCode] = useState('')
+  const [unlockBusy, setUnlockBusy] = useState(false)
+  const [unlockError, setUnlockError] = useState('')
+  const [reload, setReload] = useState(0)
   const entryId = new URLSearchParams(window.location.search).get('entry')
 
   useEffect(() => {
@@ -346,7 +399,10 @@ export function RegistrationPortal({ categoryId }: { categoryId: string }) {
       try {
         if (categoryId === 'all') { const items = await api<Category[]>('/categories'); if (active) setCategories(items) }
         else {
-          const item = await api<Category>(`/categories/${categoryId}`)
+          const hadToken = Boolean(playerToken(categoryId))
+          const item = await api<Category>(`/categories/${categoryId}`, { headers: playerHeaders(categoryId) })
+          // A stored token that no longer unlocks the board was reset or expired with the event.
+          if (hadToken && item.locked) { storePlayerToken(categoryId, ''); if (active) setUnlockError(item.ended ? 'The event has ended, so team codes no longer work.' : 'Your team code was reset. Ask the organizer for the new code.') }
           if (active) { setCategory(item); setPlayers((current) => current.length === (item.format === 'singles' ? 1 : 2) ? current : Array.from({ length: item.format === 'singles' ? 1 : 2 }, emptyPlayer)) }
           if (entryId) { const status = await api<EntryStatus>(`/categories/${categoryId}/registration/${entryId}`); if (active) setEntry(status) }
         }
@@ -356,7 +412,29 @@ export function RegistrationPortal({ categoryId }: { categoryId: string }) {
     void load()
     const timer = window.setInterval(() => { if (categoryId !== 'all') void load() }, 5000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [categoryId, entryId])
+  }, [categoryId, entryId, reload])
+
+  // The phone that registered unlocks the board by itself once the team is approved.
+  useEffect(() => {
+    if (!entry?.accessCode || !category?.locked || playerToken(categoryId)) return
+    // Quietly skipped when both phone slots are already taken; the code is still shown for manual entry.
+    unlockBoard(categoryId, entry.accessCode).then(() => setReload((current) => current + 1)).catch(() => {})
+  }, [entry?.accessCode, category?.locked, categoryId])
+
+  async function unlock(value: string) {
+    setUnlockBusy(true)
+    try {
+      await unlockBoard(categoryId, value)
+      setCode(''); setUnlockError(''); setReload((current) => current + 1)
+    } catch (problem) { setUnlockError((problem as Error).message) }
+    finally { setUnlockBusy(false) }
+  }
+
+  async function leaveBoard() {
+    await api(`/categories/${categoryId}/access`, { method: 'DELETE', headers: playerHeaders(categoryId) }).catch(() => {})
+    storePlayerToken(categoryId, '')
+    setReload((current) => current + 1)
+  }
 
   async function upload(index: number, file?: File) {
     if (!file) return
@@ -384,7 +462,7 @@ export function RegistrationPortal({ categoryId }: { categoryId: string }) {
   return <main className="hub-public"><div className="hub-public-inner"><header className="hub-public-top"><a href="?register=all"><img className="hub-brand-logo" src="/pbb-logo.webp" alt="PBB Pickleball" width="600" height="400" /></a><span>PLAYER REGISTRATION</span></header>
     {loading ? <div className="hub-empty">Loading tournament...</div> : categoryId === 'all' ? <>
       <div className="hub-public-hero"><span className="hub-eyebrow">CHOOSE YOUR GAME</span><h1>Find your<br /><em>category.</em></h1><p>Register your team from your phone. Watch this page for your pool and match assignment after the live draw.</p></div>
-      <div className="hub-public-grid">{categories.map((item) => <a className="hub-public-category" href={registrationUrl(item.id)} key={item.id}><span>{item.division.toUpperCase()} / {labelFormat(item.format).toUpperCase()}</span><strong>{item.title}</strong><small>{labelEligibility(item.eligibility)} · ₱{item.fee.toLocaleString()} / player</small><div><b>{item.draw ? 'Draw is live' : `${item.approvedCount} / ${item.capacity} approved`}</b><ArrowRight size={20} /></div></a>)}</div>
+      <div className="hub-public-grid">{categories.map((item) => <a className="hub-public-category" href={registrationUrl(item.id)} key={item.id}><span>{item.division.toUpperCase()} / {labelFormat(item.format).toUpperCase()}</span><strong>{item.title}</strong><small>{labelEligibility(item.eligibility)} · ₱{item.fee.toLocaleString()} / player</small><div><b>{item.ended ? 'Event ended' : item.draw || item.drawPublished ? 'Draw is live' : `${item.approvedCount} / ${item.capacity} approved`}</b><ArrowRight size={20} /></div></a>)}</div>
       {categories.length === 0 && <div className="hub-empty">{error || 'No categories have been posted yet.'}</div>}
     </> : category ? <>
       <a className="hub-back" href="?register=all"><ArrowLeft size={16} /> All categories</a>
@@ -395,9 +473,11 @@ export function RegistrationPortal({ categoryId }: { categoryId: string }) {
         {entry.status === 'pending' && <p>Your registration is in. The organizer will review it before the draw.</p>}
         {entry.status === 'rejected' && <p>This entry was not approved. Contact the organizer for details.</p>}
         {entry.status === 'approved' && !ownPool && <p>Approved! Check back here for the live random draw.</p>}
+        {entry.accessCode && <div className="hub-team-code"><span>YOUR TEAM CODE</span><strong>{entry.accessCode}</strong><p>Share it only with your partner. It unlocks the games and results on {entry.deviceLimit === 1 ? '1 phone' : `up to ${entry.deviceLimit} phones`} ({entry.devicesUsed ?? 0} in use) and expires when the organizer ends the event.</p></div>}
+        {entry.ended && <p>This event has ended. Thank you for playing!</p>}
         {ownPool && <div className="hub-your-assignment"><span>YOUR ASSIGNMENT</span><strong>{ownPool.name}</strong><b>{ownPool.court} · {entry.matches.length} pool games</b><p>Your matchups are highlighted in the draw below.</p></div>}
         <small>Save this page link to check your status and next match later.</small>
-      </section> : !category.draw ? <section className="hub-register">
+      </section> : !category.draw && !category.drawPublished && !category.ended ? <section className="hub-register">
         <div className="hub-section-heading"><div><span className="hub-eyebrow">JOIN THE LINEUP</span><h2>Register your team</h2></div><span className="hub-open-pill">REGISTRATION OPEN</span></div>
         <p>One form per team. Add each player's name and photo; the organizer will approve the entry.{category.requirePayment ? ` Entry fee is ₱${category.fee.toLocaleString()} per player; teams are approved once payment is confirmed.` : ''}</p>
         <form onSubmit={register}>
@@ -412,8 +492,16 @@ export function RegistrationPortal({ categoryId }: { categoryId: string }) {
           <button className="hub-submit" type="submit" disabled={busy}>Submit registration <ArrowRight size={19} /></button>
           <small>By submitting, you agree to display your team names and photos in the published draw.</small>
         </form>
-      </section> : <div className="hub-closed"><CheckCircle2 size={20} /> Registration is closed. The draw is live below.</div>}
-      {category.draw && <LiveDrawBoard category={category} ownId={entry?.id} publicBase={window.location.origin} />}
+      </section> : !category.ended && <div className="hub-closed"><CheckCircle2 size={20} /> Registration is closed. {category.locked ? 'Enter your team code below to see the draw.' : 'The draw is live below.'}</div>}
+      {category.ended && !entry && <div className="hub-closed"><Flag size={18} /> This event has ended. Thank you for playing!</div>}
+      {category.viewer && <div className="hub-viewer-bar"><KeyRound size={16} /> Viewing as <strong>{category.viewer.teamName}</strong><button type="button" onClick={() => void leaveBoard()}>Sign out this phone</button></div>}
+      {category.locked && !category.ended && <section className="hub-unlock">
+        <span className="hub-login-icon"><LockKeyhole size={22} /></span>
+        <div><h3>{category.drawPublished ? 'The draw is live. Enter your team code to see it.' : 'Games and results are private.'}</h3><p>Approved teams get a team code from the organizer (it also appears on your entry page after approval). It works on your team's phones only.</p></div>
+        <form onSubmit={(event) => { event.preventDefault(); void unlock(code) }}><input aria-label="Team code" placeholder="ABC-123" autoCapitalize="characters" autoComplete="one-time-code" maxLength={9} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} required /><button type="submit" disabled={unlockBusy}>Unlock <ArrowRight size={16} /></button></form>
+        {unlockError && <p className="hub-error">{unlockError}</p>}
+      </section>}
+      {category.draw && <LiveDrawBoard category={category} ownId={category.viewer?.teamId ?? entry?.id} publicBase={window.location.origin} />}
     </> : <div className="hub-error">{error || 'Category not found.'}</div>}
     <footer className="hub-public-footer">PBB PICKLEBALL <span>BUILT FOR THE NEXT GAME</span></footer>
   </div></main>

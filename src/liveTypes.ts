@@ -11,6 +11,7 @@ export type LiveCategory = {
   id: string; title: string; division: string; format: 'doubles' | 'mixed-doubles' | 'singles'
   approvedCount: number; capacity: number; winsToQualify: number; pointsToWin: number; winBy: number
   qualifyMode: 'top' | 'wins'; qualifyTop: number
+  locked?: boolean; drawPublished?: boolean; privateBoard?: boolean; ended?: boolean
   draw: { pools: { name: string; court: string; teams: LiveTeam[] }[]; matches: LiveMatch[]; publishedAt: string } | null
   standings?: LiveStanding[]
   qualified?: { id: string; teamName: string; wins: number; pool: string }[]

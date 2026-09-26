@@ -10,6 +10,7 @@ import LiveOverview from './LiveOverview'
 import LiveSchedule from './LiveSchedule'
 import RegallReference from './RegallReference'
 import type { LiveCategory } from './liveTypes'
+import { authHeaders, playerHeaders, readToken } from './adminApi'
 
 type SectionId = 'dashboard' | 'live' | 'schedule' | 'organizer' | 'reference'
 
@@ -32,8 +33,16 @@ function CategoryTabs({ categories, selectedId, onSelect }: { categories: LiveCa
   return <div className="live-category-tabs">
     {categories.map((category) => <button type="button" className={category.id === selectedId ? 'active' : ''} key={category.id} onClick={() => onSelect(category.id)}>
       <strong>{category.title}</strong>
-      <span>{category.playoff ? 'playoffs' : category.draw ? `${category.draw.pools.length} pools` : 'registration open'} · {category.approvedCount}/{category.capacity} approved</span>
+      <span>{category.ended ? 'event ended' : category.locked ? 'private board' : category.playoff ? 'playoffs' : category.draw ? `${category.draw.pools.length} pools` : 'registration open'} · {category.approvedCount}/{category.capacity} approved</span>
     </button>)}
+  </div>
+}
+
+function PrivateNotice({ category }: { category: LiveCategory }) {
+  return <div className="live-category-empty">
+    <strong>{category.title}: private board</strong>
+    <p>{category.ended ? 'This event has ended.' : 'Games and results are visible only to approved teams with their team code, and to signed-in organizers.'}</p>
+    {!category.ended && <a href={`?register=${encodeURIComponent(category.id)}`}>Enter your team code <ArrowRight size={16} /></a>}
   </div>
 }
 
@@ -55,7 +64,7 @@ function App() {
     let active = true
     async function loadLiveCategories() {
       try {
-        const response = await fetch('/api/categories', { cache: 'no-cache' })
+        const response = await fetch('/api/categories', { cache: 'no-cache', headers: { ...authHeaders(readToken()), ...playerHeaders() } })
         const items = await response.json()
         if (!response.ok) throw new Error(items.error || 'Could not load categories.')
         if (!active) return
@@ -163,7 +172,7 @@ function App() {
             {liveCategories.length ? (
               <>
                 <CategoryTabs categories={liveCategories} selectedId={selectedLiveCategory?.id} onSelect={setSelectedLiveCategoryId} />
-                {selectedLiveCategory?.draw ? <LiveDrawBoard category={selectedLiveCategory} /> : (
+                {selectedLiveCategory?.locked ? <PrivateNotice category={selectedLiveCategory} /> : selectedLiveCategory?.draw ? <LiveDrawBoard category={selectedLiveCategory} /> : (
                   <div className="live-category-empty">
                     <strong>{selectedLiveCategory?.title}</strong>
                     <p>This category is open for registration. It appears as a full board after the organizer publishes the random draw.</p>
@@ -186,7 +195,7 @@ function App() {
             </div>
             {liveCategories.length ? <>
               <CategoryTabs categories={liveCategories} selectedId={selectedLiveCategory?.id} onSelect={setSelectedLiveCategoryId} />
-              {selectedLiveCategory && <LiveSchedule key={selectedLiveCategory.id} category={selectedLiveCategory} />}
+              {selectedLiveCategory?.locked ? <PrivateNotice category={selectedLiveCategory} /> : selectedLiveCategory && <LiveSchedule key={selectedLiveCategory.id} category={selectedLiveCategory} />}
             </> : loaded ? noCategories : <div className="live-category-empty"><p>Loading live schedule...</p></div>}
           </section>
         )}

@@ -41,3 +41,30 @@ export async function download(path: string, token: string, fallbackName: string
   document.body.append(link); link.click(); link.remove()
   URL.revokeObjectURL(url)
 }
+
+// Player access: unlocking a private board with a team code stores one token per category on this phone.
+const playerKey = 'pbb-player-tokens'
+
+function readPlayerTokens(): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(playerKey) || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, string> : {}
+  } catch { return {} }
+}
+
+export function playerToken(categoryId: string) {
+  return readPlayerTokens()[categoryId] || ''
+}
+
+export function storePlayerToken(categoryId: string, token: string) {
+  const tokens = readPlayerTokens()
+  if (token) tokens[categoryId] = token
+  else delete tokens[categoryId]
+  try { window.localStorage.setItem(playerKey, JSON.stringify(tokens)) } catch { /* storage unavailable */ }
+}
+
+/** Header carrying this phone's team tokens: one category's, or all of them for list views. */
+export function playerHeaders(categoryId?: string): Record<string, string> {
+  const value = categoryId ? playerToken(categoryId) : Object.values(readPlayerTokens()).join(',')
+  return value ? { 'x-player-token': value } : {}
+}
