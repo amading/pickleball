@@ -28,6 +28,10 @@
 .rally-scoreboard .rally-side.serving .rally-score-number{color:#ffe86d;text-shadow:0 0 25px #ffe4608c,0 2px 10px #0006}
 .rally-scoreboard .rally-side.winner .rally-score-number{color:#ffe86d}
 .rally-scoreboard .rally-side .rally-score-number.triple{font-size:clamp(72px,9vw,104px)}
+.rally-side h2{padding-right:43px}
+.rally-score-back{position:absolute;top:9px;right:9px;z-index:1;display:flex;align-items:center;justify-content:center;gap:1px;min-width:42px;min-height:38px;padding:0 7px;border:1px solid #ffffff5c;border-radius:8px;background:#071d18a8;color:#f5fbef;font-size:13px;font-weight:900;cursor:pointer;touch-action:manipulation}
+.rally-score-back:disabled{opacity:.3;cursor:default}
+.rally-score-back:active:not(:disabled){background:#fff3;color:#fff}
 .rally-serve-zone{width:100%;min-height:100px;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:10px;padding:8px 15px;border-color:#ffe460;background:#ffe460;color:#1b2318;box-shadow:0 0 25px #ffe46032;text-align:left;cursor:pointer;touch-action:manipulation;transition:transform .13s,box-shadow .13s}
 .rally-serve-zone:active:not(:disabled){transform:scale(.985);box-shadow:0 0 32px #ffe46088}
 .rally-serve-zone:disabled{opacity:.55;cursor:default}
@@ -44,6 +48,8 @@
 .rally-footer{margin-top:9px}
 .rally-footer>button{min-height:64px}
 .rally-footer>button.rally-next-game{justify-content:space-between;padding:0 17px;border-color:#c9f46b;background:#c9f46b;color:#19301c;font-size:16px}
+.rally-reset-trigger{display:block;min-height:36px;margin:4px 0 0 auto;padding:0 8px;border:0;background:transparent;color:#b9c5b7;font-size:11px;font-weight:800;text-decoration:underline;cursor:pointer}
+.rally-reset-trigger:disabled{opacity:.4;cursor:default}
 @media(max-width:540px){.rally-page{padding-top:8px}.rally-heading-line h1{font-size:31px}.rally-side{min-height:245px}.rally-scoreboard .rally-side .rally-score-number{min-height:138px;font-size:clamp(88px,29vw,118px)}.rally-scoreboard .rally-side .rally-score-number.triple{font-size:clamp(64px,20vw,84px)}.rally-serve-zone{min-height:88px;gap:5px;padding:7px 9px}.rally-serve-zone .rally-server-number{width:58px;height:58px;font-size:42px}.rally-serve-zone .rally-serve-team,.rally-serve-zone .rally-serve-next{font-size:10px}.rally-tracker .rally-tracker-row{min-height:50px}.rally-heading p,.rally-demo{margin-left:48px}}
 @media(max-width:350px){.rally-serve-zone .rally-serve-team,.rally-serve-zone .rally-serve-next{font-size:9px}}
 @media(prefers-reduced-motion:reduce){.rally-serve-zone{transition:none}}

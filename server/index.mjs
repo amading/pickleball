@@ -946,7 +946,7 @@ const server = http.createServer(async (req, res) => {
           if (!match.team1 || !match.team2) throw new Error('Both opponents must be known before scoring.')
           const input = await body(req)
           if (Number(input.version) !== (match.version ?? 0)) return send(res, 409, { error: 'Score changed on another device. Refresh and try again.' })
-          if (!['point', 'lost-serve', 'undo', 'set-serve'].includes(input.action)) throw new Error('Choose a valid rally action.')
+          if (!['point', 'lost-serve', 'undo', 'set-serve', 'subtract-point', 'reset'].includes(input.action)) throw new Error('Choose a valid rally action.')
           match.scoreEvents ??= []
           match.rallyHistory ??= []
           const before = { score1: match.score1, score2: match.score2, status: match.status, serveTeam: match.serveTeam, serveNumber: match.serveNumber }
@@ -957,7 +957,7 @@ const server = http.createServer(async (req, res) => {
             if (!previous) throw new Error('There is no rally action to undo.')
             Object.assign(match, previous)
           } else {
-            if (validFinal(match.score1, match.score2, category.pointsToWin ?? 11, category.winBy ?? 2)) throw new Error('Game point is reached. Confirm the result or undo the last action.')
+            if (!['subtract-point', 'reset'].includes(input.action) && validFinal(match.score1, match.score2, category.pointsToWin ?? 11, category.winBy ?? 2)) throw new Error('Game point is reached. Confirm the result or undo the last action.')
             if (input.action === 'point') {
               if (Number(input.team) !== match.serveTeam) throw new Error('Only the serving team can score. Tap the yellow server number to change serve.')
               const key = match.serveTeam === 1 ? 'score1' : 'score2'
@@ -965,6 +965,16 @@ const server = http.createServer(async (req, res) => {
               match[key] += 1
               eventTeam = match.serveTeam
               change = 1
+            } else if (input.action === 'subtract-point') {
+              if (![1, 2].includes(Number(input.team))) throw new Error('Choose the team whose point should be removed.')
+              const key = Number(input.team) === 1 ? 'score1' : 'score2'
+              if (match[key] < 1) throw new Error('That team has no points to remove.')
+              match[key] -= 1
+              eventTeam = Number(input.team)
+              change = -1
+            } else if (input.action === 'reset') {
+              match.score1 = 0; match.score2 = 0
+              match.serveTeam = 1; match.serveNumber = category.format === 'singles' ? 1 : 2
             } else if (input.action === 'lost-serve') {
               if (category.format !== 'singles' && match.serveNumber === 1) match.serveNumber = 2
               else { match.serveTeam = match.serveTeam === 1 ? 2 : 1; match.serveNumber = 1 }
@@ -977,7 +987,7 @@ const server = http.createServer(async (req, res) => {
               eventTeam = match.serveTeam
             }
             match.rallyHistory.push(before)
-            match.status = 'live'
+            match.status = input.action === 'reset' ? 'scheduled' : 'live'
           }
           match.version = (match.version ?? 0) + 1
           match.scoreEvents.push({ id: randomUUID(), action: input.action, team: eventTeam, change,
