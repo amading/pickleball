@@ -7,10 +7,9 @@
 .rally-state.final{background:#83dba128;color:#a9f5c0}
 .rally-heading p{margin:2px 0 0 48px}
 .rally-demo{display:block;margin:2px 0 0 48px;color:#d8f788;font-size:9px;font-weight:900;letter-spacing:.09em}
-.rally-call{justify-content:flex-end;gap:15px;padding:7px 12px}
-.rally-call small{margin-right:auto}
-.rally-call button{display:grid;place-items:center;width:25px;height:25px;border:0;background:transparent;color:#a9bfa9;cursor:pointer}
-.rally-call .rally-save-indicator{display:flex;align-items:center;gap:5px;margin-right:auto;color:#c7f28f;font-size:10px;font-weight:900;letter-spacing:.03em;white-space:nowrap}
+.rally-call{position:relative;justify-content:center;gap:15px;padding:7px 12px}
+.rally-call button{position:absolute;right:12px;display:grid;place-items:center;width:25px;height:25px;border:0;background:transparent;color:#a9bfa9;cursor:pointer}
+.rally-call .rally-save-indicator{position:absolute;left:12px;display:flex;align-items:center;gap:5px;margin:0;color:#c7f28f;font-size:10px;font-weight:900;letter-spacing:.03em;white-space:nowrap}
 .rally-call .rally-save-indicator.saving{color:#ffe37a}
 .rally-call .rally-save-indicator.offline,.rally-call .rally-save-indicator.error{color:#ffad8f}
 .rally-call .rally-save-indicator.demo,.rally-call .rally-save-indicator.local{color:#a6b8a7}
