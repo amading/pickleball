@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, CloudOff, CloudUpload, History, RefreshCw, RotateCcw, Trophy, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, CloudOff, CloudUpload, RefreshCw, RotateCcw, Trophy } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import './liveScoring.css'
 import './rallyMinimal.css'
@@ -63,7 +63,6 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, onNextGame
   const [refreshIndex, setRefreshIndex] = useState(0)
   const [dismissedVersion, setDismissedVersion] = useState<number | null>(null)
   const [showCorrection, setShowCorrection] = useState(false)
-  const [showHistory, setShowHistory] = useState(false)
   const adminToken = readToken()
   const invalidScoreKey = !categoryId || !matchId || !token
 
@@ -114,7 +113,6 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, onNextGame
       onDemoSave?.(updated)
       setLastSaved(true)
       setShowCorrection(false)
-      setShowHistory(false)
       if ('vibrate' in navigator) navigator.vibrate(25)
     } catch (problem) { if (problem instanceof TypeError || !navigator.onLine) setServerReachable(false); setLastSaved(false); setError((problem as Error).message); setRefreshIndex((current) => current + 1) }
     finally { setBusy(false) }
@@ -158,17 +156,6 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, onNextGame
   const nearTarget = (score: number) => score >= (data?.pointsToWin ?? 11) - 1
   const saveState = demoData ? lastSaved ? 'local' : 'demo' : busy ? 'saving' : !online || !serverReachable ? 'offline' : error ? 'error' : lastSaved ? 'saved' : 'saving'
   const saveLabel = { local: 'Local only', demo: 'Demo', saving: 'Saving', offline: 'Offline', error: 'Not saved', saved: 'Saved' }[saveState]
-  const historyEvents = [...(match?.scoreEvents ?? [])].reverse().slice(0, 10)
-
-  function eventLabel(event: ScoreEvent) {
-    const teamName = event.team === 1 ? data?.team1?.teamName : event.team === 2 ? data?.team2?.teamName : ''
-    if (event.action === 'point') return `+1 ${teamName}`
-    if (event.action === 'lost-serve') return `Serve → ${teamName} · ${event.serveNumber ?? 1}`
-    if (event.action === 'set-serve') return `Serve fixed → ${teamName} · ${event.serveNumber ?? 1}`
-    if (event.action === 'undo') return 'Undo last action'
-    return 'Score corrected'
-  }
-
   return <main className="score-page rally-page"><div className="score-shell rally-shell">
     {data && match ? <>
       <div className="rally-heading"><div className="rally-heading-line">{onBack ? <button type="button" className="rally-back" aria-label="Back to games" onClick={onBack}><ArrowLeft size={21} /></button> : <a className="rally-back" aria-label="Back to tournament" href={`/?register=${categoryId}`}><ArrowLeft size={21} /></a>}<h1>{match.stage === 'pool' ? `Game ${match.game}` : `Playoff · Round ${match.round}`}</h1><span className={`rally-state ${match.status}`}>{match.status === 'final' ? 'FINAL' : match.status === 'live' ? 'LIVE' : 'READY'}</span></div><p>{match.court} · {match.pool ?? data.categoryTitle} · To {data.pointsToWin}</p>{demoData && <span className="rally-demo">DEMO · NO REAL RESULTS</span>}</div>
@@ -188,13 +175,12 @@ export default function LiveScoring({ scoreKey, stationToken, onBack, onNextGame
       })}</div>
       <button type="button" className="rally-serve-zone" aria-label={`Change serve from ${servingTeam === 1 ? data.team1?.teamName : data.team2?.teamName}, server ${match.serveNumber}, to ${nextServeTeam?.teamName}, server ${nextServeNumber}`} disabled={!canScore || canFinalize || busy} onClick={() => void rally('lost-serve')}><span className="rally-serve-team">{servingTeam === 1 ? data.team1?.teamName : data.team2?.teamName}</span><span className="rally-server-number">{match.serveNumber}</span><span className="rally-serve-next">→ {nextServeTeam?.teamName} · {nextServeNumber}</span></button>
       {canScore && !canFinalize && <><button className="rally-correct-toggle" type="button" onClick={() => setShowCorrection((shown) => !shown)}>Fix serve</button>{showCorrection && <div className="rally-correction"><span>SELECT THE ACTUAL SERVER</span><div>{([1, 2] as const).flatMap((team) => (data.format === 'singles' ? [1] : [1, 2]).map((number) => <button type="button" key={`${team}-${number}`} disabled={busy || !canScore || (match.serveTeam === team && match.serveNumber === number)} onClick={() => void rally('set-serve', team, number as 1 | 2)}>Team {team} · Server {number}</button>))}</div></div>}</>}
-      <div className="rally-tracker"><div className="rally-tracker-heading"><span>POINTS</span><div><strong>To {data.pointsToWin} · +{data.winBy}</strong><button type="button" aria-label="Show scoring history" onClick={() => setShowHistory(true)}><History size={17} /></button></div></div>{([data.team1, data.team2] as const).map((team, index) => {
+      <div className="rally-tracker">{([data.team1, data.team2] as const).map((team, index) => {
         const score = index === 0 ? match.score1 : match.score2
         return <div className="rally-tracker-row" key={index}><div className="rally-tracker-meta"><span>{team?.teamName || `Team ${index + 1}`}</span><strong>{score}</strong></div><div className="rally-tracker-boxes">{Array.from({ length: score }, (_, point) => <b className={point + 1 >= data.pointsToWin - 1 ? 'near' : ''} key={point}><Check size={11} /></b>)}</div></div>
       })}</div>
       {error && <div className="score-error">{error}</div>}
       <div className="rally-footer">{match.status !== 'final' && <button type="button" disabled={!canScore || !match.canUndo || busy} onClick={() => void rally('undo')}><RotateCcw size={20} /> Undo</button>}{canFinalize && match.status !== 'final' && <button type="button" className="rally-end" onClick={() => setDismissedVersion(null)}><Trophy size={18} /> End game</button>}{match.status === 'final' && (onNextGame ? <button type="button" className="rally-next-game" onClick={onNextGame}>Next game <ArrowRight size={20} /></button> : onBack ? <button type="button" className="rally-next-game" onClick={onBack}>Games <ArrowRight size={20} /></button> : <div><CheckCircle2 size={19} /> Result confirmed</div>)}</div>
-      {showHistory && <div className="rally-history-backdrop"><button type="button" className="rally-history-scrim" aria-label="Close scoring history" onClick={() => setShowHistory(false)} /><section className="rally-history-sheet" role="dialog" aria-modal="true" aria-labelledby="rally-history-title"><div className="rally-history-title"><h2 id="rally-history-title">Recent actions</h2><button type="button" aria-label="Close scoring history" onClick={() => setShowHistory(false)}><X size={20} /></button></div>{historyEvents.length ? <div className="rally-history-list">{historyEvents.map((event) => <div key={event.id}><span>{eventLabel(event)}</span><strong>{event.score1}–{event.score2}</strong><small>{new Date(event.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small></div>)}</div> : <p>No scoring actions yet.</p>}</section></div>}
       {finishPrompt && <div className="rally-dialog-backdrop"><div className="rally-dialog" role="dialog" aria-modal="true" aria-labelledby="rally-dialog-title"><span>MATCH POINT</span><h2 id="rally-dialog-title">End this game?</h2><p>{match.score1}–{match.score2} meets the organizer’s rule: first to {data.pointsToWin}, win by {data.winBy}. Confirm the winner to update the tournament.</p><strong>{match.score1 > match.score2 ? data.team1?.teamName : data.team2?.teamName}</strong>{!demoData && (!online || !serverReachable) && <p>Reconnect to confirm this result.</p>}<div><button type="button" onClick={() => setDismissedVersion(match.version)}>Review score</button><button type="button" disabled={busy || (!demoData && (!online || !serverReachable))} onClick={() => void finalize()}>Confirm winner</button></div></div></div>}
     </> : <div className="score-loading">{invalidScoreKey ? 'This scoring QR link is incomplete.' : error || 'Loading match…'}</div>}
   </div></main>
